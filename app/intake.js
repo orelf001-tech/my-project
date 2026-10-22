@@ -5,7 +5,7 @@
 // created here, stored non-extractable in IndexedDB, and backed up wrapped with her passphrase.
 import * as C from './shared/crypto.js';
 import { SECTIONS, BY_ID, normalizeAnswers, LIMITS } from './shared/template.js';
-import { buildPrefill, prefillMonth, applyAnswers, compare, insights } from './intake-core.js';
+import { buildPrefill, prefillMonth, applyAnswers, compare, insights, summaryText } from './intake-core.js';
 import { keystore } from './keystore.js';
 
 const cf = window.__cf;
@@ -452,6 +452,8 @@ function detailView(s) {
         </div>
         <p class="small">סעיפים חדשים מתווספים, ושום סעיף לא נמחק. הוצאות שנתיות נכנסות כסכום חודשי (שנתי חלקי 12).</p>
         ${btn('import', 'קליטה לתיק', `data-id="${esc(s.id)}"`)}
+        <p class="small" style="margin-top:14px"><b>סיכום מסודר למייל שלך</b> (נבנה כאן במחשב, ונשלח רק כשאת לוחצת ״שליחה״ ב־Gmail):</p>
+        <div class="row-btns"><button class="btn ghost" data-ia="mail" data-id="${esc(s.id)}">פתיחה ב־Gmail</button><button class="btn ghost" data-ia="copysum" data-id="${esc(s.id)}">העתקת הסיכום</button></div>
       </div></div>
     </div>
     <div class="card"><h2>מה הלקוח/ה מילא/ה, מול מה שיש בתיק${month ? ` (״${esc(month.label)}״)` : ''}</h2>
@@ -537,6 +539,17 @@ document.addEventListener('click', e => {
         target: document.getElementById('in-tmonth').value || '__new', column: document.getElementById('in-col').value, mode: document.getElementById('in-mode').value };
       if (!opts.clientId) { st.err = 'בחרי לאיזה תיק לקלוט את הטופס.'; rerender(); break; }
       busy('import', () => importSub(id, opts)); break;
+    }
+    case 'mail': case 'copysum': {
+      const s = st.subs.find(x => x.id === id), d = st.dec[id]; if (!d || !d.answers) break;
+      const { client, name } = clientOfSub(s), who = (client && client.name) || name;
+      const body = summaryText(d.answers, { clientName: who, receivedAt: d.submittedAt, note: st.notes[id] || '' });
+      const subject = 'טופס תזרים – ' + (who || 'לקוח/ה');
+      if (b.dataset.ia === 'mail') {
+        const u = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent((st.user && st.user.email) || '') + '&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+        window.open(u, '_blank', 'noopener');
+      } else navigator.clipboard.writeText(subject + '\n\n' + body).then(() => { st.msg = 'הסיכום הועתק ✓ אפשר להדביק במייל או בוואטסאפ.'; rerender(); }, () => { st.err = 'לא הצלחתי להעתיק.'; rerender(); });
+      break;
     }
     case 'toggle-empty': st.showEmpty = !st.showEmpty; rerender(); break;
     case 'toggle-imported': st.showImported = !st.showImported; rerender(); break;

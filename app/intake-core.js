@@ -120,3 +120,23 @@ export function insights(answers, now = new Date()) {
 }
 
 export { BY_ID };
+
+// Organized plain-text summary of a form, for the coach to email to herself (built in her browser).
+export function summaryText(answers, { clientName = '', receivedAt = '', note = '' } = {}) {
+  const ins = insights(answers), t = ins.totals;
+  const L = [];
+  L.push(`טופס תזרים חודשי – ${clientName || answers.name || 'לקוח/ה'}`);
+  if (receivedAt) L.push(`התקבל: ${new Date(receivedAt).toLocaleString('he-IL')}`);
+  if (answers.period) L.push(`מתייחס ל: ${answers.period}`);
+  L.push('', `הכנסות: ${shekel(t.income)} | הוצאות: ${shekel(t.expenses)} | הפרש: ${t.balance < 0 ? '-' : ''}${shekel(Math.abs(t.balance))}`);
+  SECTIONS.forEach(s => {
+    const rows = (answers.sections[s.id] || []).filter(r => r.amount);
+    if (!rows.length) return;
+    L.push('', `■ ${s.name} – ${shekel(t.per[s.id])} לחודש`);
+    rows.forEach(r => L.push(`   • ${r.label || 'ללא שם'}: ${shekel(r.amount)}${s.kind === 'annual' ? ` בשנה (${shekel(monthlyOf(s, r))} לחודש)` : ''}${r.end ? ` · מסתיים ${r.end}` : ''}`));
+  });
+  if (ins.flags.length) { L.push('', 'נקודות לבדיקה:'); ins.flags.forEach(f => L.push(`   – ${f.text}`)); }
+  if (answers.note) L.push('', 'הערת הלקוח/ה:', answers.note);
+  if (note) L.push('', 'ההערות שלי:', note);
+  return L.join('\n');
+}
