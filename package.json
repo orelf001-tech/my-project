@@ -1,0 +1,9 @@
+{
+  "name": "cashflow-public",
+  "private": true,
+  "type": "module",
+  "description": "Client form and shared modules for the cashflow coaching system",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs"
+  }
+}
