@@ -39,12 +39,15 @@ async function rpc(name, body) {
 
 /* ---------- draft (kept only on this device) ---------- */
 let draftTimer = null;
-function saveDraft() {
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => {
-    try { localStorage.setItem(S.draftKey, JSON.stringify({ answers: S.answers, step: S.step, t: Date.now() })); flashSaved('הטיוטה נשמרה'); } catch (_) {}
-  }, 300);
+function writeDraft() {
+  clearTimeout(draftTimer); draftTimer = null;
+  if (!S.answers || S.done) return;
+  try { localStorage.setItem(S.draftKey, JSON.stringify({ answers: S.answers, step: S.step, t: Date.now() })); flashSaved('הטיוטה נשמרה'); } catch (_) {}
 }
+function saveDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(writeDraft, 300); }
+// Closing the tab or switching apps right after typing must not lose the last change.
+window.addEventListener('pagehide', () => { if (draftTimer) writeDraft(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && draftTimer) writeDraft(); });
 function loadDraft() { try { const d = JSON.parse(localStorage.getItem(S.draftKey) || 'null'); return d && d.answers && d.answers.sections ? d : null; } catch (_) { return null; } }
 function clearDraft() { try { localStorage.removeItem(S.draftKey); } catch (_) {} }
 function flashSaved(t) { const el = document.getElementById('saved'); if (el) el.textContent = t; }
@@ -124,16 +127,16 @@ function sectionView(s) {
 
 function reviewView() {
   const a = normalizeAnswers(S.answers), t = totals(a);
-  const line = s => `<tr><td><span class="dot" data-color="${s.color}"></span>${esc(s.title)}</td><td class="num">${fmt(t.per[s.id])}</td></tr>`;
+  const line = s => `<tr><td><span class="dot" data-color="${s.color}"></span>${esc(s.title)}</td><td><span class="num">${fmt(t.per[s.id])}</span></td></tr>`;
   return `${progress()}
   <section class="card">
     <div class="pad"><h2 tabindex="-1" id="h">סיכום לפני שליחה</h2><p class="lead">אפשר לחזור לכל שלב ולתקן. הסכומים בחודש.</p></div>
     <table class="sum"><tbody>
       ${line(BY_ID.inc)}
-      <tr class="t"><td>סה״כ הכנסות</td><td class="num">${fmt(t.income)}</td></tr>
+      <tr class="t"><td>סה״כ הכנסות</td><td><span class="num">${fmt(t.income)}</span></td></tr>
       ${SECTIONS.filter(s => !s.income).map(line).join('')}
-      <tr class="t"><td>סה״כ הוצאות</td><td class="num">${fmt(t.expenses)}</td></tr>
-      <tr class="t"><td>הפרש</td><td class="num ${t.balance < 0 ? 'neg' : 'pos'}">${fmt(t.balance)}</td></tr>
+      <tr class="t"><td>סה״כ הוצאות</td><td><span class="num">${fmt(t.expenses)}</span></td></tr>
+      <tr class="t"><td>הפרש</td><td><span class="num ${t.balance < 0 ? 'neg' : 'pos'}">${fmt(t.balance)}</span></td></tr>
     </tbody></table>
     <div class="pad">
       <div class="field"><label for="nt">משהו שחשוב שהמאמנת תדע? (לא חובה)</label><textarea id="nt" data-g="note" rows="4" maxlength="1000">${esc(S.answers.note)}</textarea></div>
