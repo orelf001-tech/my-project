@@ -7,6 +7,7 @@
 | `form/` | טופס התבנית החודשית שהלקוח ממלא. מתפרסם ב־GitHub Pages: `https://orelf001-tech.github.io/my-project/form/` |
 | `shared/` | קוד משותף לטופס ולמערכת המאמנת: הצפנה מקצה לקצה (`crypto.js`) והגדרת התבנית (`template.js`) |
 | `assets/` | לוגו וגופן Assistant (מאוחסן מקומית, בלי פניות ל־Google) |
+| `app/` | מערכת המאמנת (עותק פריסה זמני מהריפו הפרטי `cashflow-coach`): `https://orelf001-tech.github.io/my-project/app/`. אין בה נתונים, והכניסה מוגנת בסיסמה ובאימות דו־שלבי |
 | `tests/` | בדיקות יחידה: `npm test` |
 | `docs/ENGINEERING_PLAN.md` | התכנון ההנדסי |
 
