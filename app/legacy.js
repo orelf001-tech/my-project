@@ -385,13 +385,13 @@ function autoCat(t, rules){
   return 'uns';
 }
 const INC_RE = /משכורת|שכר|קצבה|קצבת|ביטוח לאומי|בטוח לאומי|דיבידנד|החזר מס|מענק|פנסיה|גמלה|תשלום ממעסיק|הכנסה/;
-const catStr = t => t.man ? t.cat : (t.x ? 'skip' : t.ac);
+const catStr = t => t.out ? 'skip' : (t.man ? t.cat : (t.x ? 'skip' : t.ac));
 const catOf = t => String(catStr(t)).split('/')[0];
 const subOf = t => { const s = String(catStr(t)); const i = s.indexOf('/'); return i < 0 ? '' : s.slice(i + 1); };
 function buildTx(raw, src, type){
   let inst = false;
-  const m = (raw.desc + ' ' + raw.ex).match(/תשלום\s*(\d+)\s*(?:מתוך|\/)\s*(\d+)/);
-  if (m && +m[2] > 1) inst = true; else if (/תשלומים/.test(raw.ex) && !/הוראת קבע/.test(raw.ex)) inst = true;
+  const m = payOf(raw.desc + ' ' + raw.ex);
+  if (m && m[1] > 1) inst = true; else if (/תשלומים/.test(raw.ex) && !/הוראת קבע/.test(raw.ex)) inst = true;
   const key = mkey(raw.desc, type);
   const settle = type === 'bank' && raw.kind === 'exp' && SETTLE_RE.test(raw.desc), named = settle && raw.desc.match(/(?:^|\D)(\d{4})(?:\D|$)/);
   return {id:uid(), src, type, date:raw.date, cd:raw.cd, desc:raw.desc, amt:raw.amt, kind:raw.kind, ex:raw.ex.slice(0, 60), ic:raw.ic.slice(0, 30), key, rk:raw.kind + '|' + key, card:raw.card || (named ? named[1] : ''), pa:raw.pa || 0, fx:!!raw.fx,
@@ -402,7 +402,13 @@ let crossRes = {matched:[], unmatched:[], near:[], covered:[], groups:[], cardUn
 function crossCheck(rep){
   const oldGap = {}; rep.tx.forEach(t => { if (t.virt && t.man) oldGap[t.id] = t.cat; });
   rep.tx = rep.tx.filter(t => !t.virt);
-  rep.tx.forEach(t => { t.x = null; delete t.gap; });
+  rep.tx.forEach(t => { t.x = null; delete t.gap; delete t.out; });
+  // The report covers the bank statement's months. Card purchases outside them stay out of the report: the
+  // next month's statement adds the last month's purchases, and its own new purchases are not part of the period.
+  const bankDates = rep.tx.filter(t => t.type === 'bank').map(t => t.date).sort();
+  const period = bankDates.length ? {from:bankDates[0].slice(0, 7), to:bankDates[bankDates.length - 1].slice(0, 7)} : null;
+  rep.period = period;
+  if (period) rep.tx.forEach(t => { if (t.type !== 'card') return; const mk = monthOfTx(t, rep); if (mk < period.from || mk > period.to) t.out = mk > period.to ? 'after' : 'before'; });
   const groups = {}, cards = rep.tx.filter(t => t.type === 'card'), cardIds = new Set(cards.map(t => t.card).filter(Boolean));
   cards.forEach(t => { const k = (t.card || '') + '|' + (t.cd || ''); const g = groups[k] || (groups[k] = {k, src:t.src, card:t.card || '', cd:t.cd, sum:0, n:0, matched:false}); g.sum += (t.kind === 'exp' ? t.amt : -t.amt); g.n++; });
   const gl = Object.values(groups).map(g => { g.sum = r2(g.sum); return g; });
@@ -501,7 +507,8 @@ function deleteTx(id){
 function deleteSource(id){ const rep = cl().rep; rep.sources = rep.sources.filter(s => s.id !== id); rep.tx = rep.tx.filter(t => t.src !== id); recomputeAll(); persist(); }
 
 /* ================= installments ================= */
-const PAYRE = /תשלום\s*(\d+)\s*(?:מתוך|\/)\s*(\d+)/;
+const PAYRE = /(?:תשלום\s*(\d+)\s*(?:מתוך|\/)\s*(\d+))|(?:^|\s)(\d+)\s*מ\s*-\s*(\d+)(?:\s|$)/;
+const payOf = str => { const m = String(str).match(PAYRE); return m ? (m[1] ? [+m[1], +m[2]] : [+m[3], +m[4]]) : null; };
 let instMap = {};
 function buildInstallments(){
   const rep = cl().rep, groups = {}; instMap = {};
@@ -512,8 +519,8 @@ function buildInstallments(){
     items.sort((a, b) => (a.cd || a.date) < (b.cd || b.date) ? -1 : 1);
     const first = items[0], last = items[items.length - 1], amt = last.amt, pa = first.pa || 0;
     let n = items.length, N = null, explicit = false;
-    const m = items.map(t => (t.desc + ' ' + t.ex).match(PAYRE)).filter(Boolean).pop();
-    if (m) { n = +m[1]; N = +m[2]; explicit = true; }
+    const m = items.map(t => payOf(t.desc + ' ' + t.ex)).filter(Boolean).pop();
+    if (m) { n = m[0]; N = m[1]; explicit = true; }
     else if (pa > 0 && amt > 0) N = Math.max(2, Math.round(pa / amt));
     const paid = items.reduce((a, t) => a + t.amt, 0);
     const remaining = N ? Math.max(0, N - n) : null;
@@ -611,7 +618,7 @@ function txMatch(t, d){
 }
 const srcName = id => { const s = cl().rep.sources.find(x => x.id === id); return s ? s.name : ''; };
 function txRow(t, withSel){
-  return `<tr class="${withSel === 'sub' ? 'sub' : ''}"><td>${esc(t.date.split('-').reverse().join('/'))}</td><td>${esc(t.desc)}${t.inst ? ` <span class="tag">${instMap[t.id] && instMap[t.id].N ? 'תשלום ' + instMap[t.id].n + ' מתוך ' + instMap[t.id].N : 'תשלומים'}</span>` : ''}${t.settle ? (t.x ? '' : ' <span class="tag">חיוב אשראי ללא פירוט</span>') : ''}${t.virt ? ' <span class="tag">ההפרש בין החיוב בעו״ש לפירוט</span>' : ''}${t.kind === 'inc' ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a"><span class="tag ${t.type}">${t.type === 'card' ? 'אשראי' : 'עו״ש'}</span> <span class="small">${esc(srcName(t.src))}</span></td><td class="a"><span class="num ${t.kind === 'inc' ? 'pos' : ''}">${fmt(t.kind === 'inc' ? t.amt : t.amt)}</span></td><td class="a">${withSel === 'sub' ? xStatus([t]) : (xStatus([t]) || catSel(catStr(t), `data-t="${t.id}"`))}</td><td class="a">${t.virt ? '' : (catOf(t) === 'once' ? `<button class="x on" data-act="unonce" data-t="${t.id}" title="להחזיר לחישוב" aria-label="להחזיר לחישוב">↺</button>` : `<button class="x one" data-act="once" data-t="${t.id}" title="חד פעמי: להוציא מהחישוב והממוצע" aria-label="חד פעמי">חד פעמי</button>`)}${t.virt ? '' : `<button class="x" data-act="deltx" data-t="${t.id}" title="מחיקת שורת חיוב" aria-label="מחיקת שורת חיוב">×</button>`}</td></tr>`;
+  return `<tr class="${withSel === 'sub' ? 'sub' : ''}"><td>${esc(t.date.split('-').reverse().join('/'))}</td><td>${esc(t.desc)}${t.inst ? ` <span class="tag">${instMap[t.id] && instMap[t.id].N ? 'תשלום ' + instMap[t.id].n + ' מתוך ' + instMap[t.id].N : 'תשלומים'}</span>` : ''}${t.settle ? (t.x ? '' : ' <span class="tag">חיוב אשראי ללא פירוט</span>') : ''}${t.virt ? ' <span class="tag">ההפרש בין החיוב בעו״ש לפירוט</span>' : ''}${t.out ? ` <span class="tag">${t.out === 'after' ? 'קנייה אחרי' : 'קנייה לפני'} תקופת הדוח, לא נספרת</span>` : ''}${t.kind === 'inc' ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a"><span class="tag ${t.type}">${t.type === 'card' ? 'אשראי' : 'עו״ש'}</span> <span class="small">${esc(srcName(t.src))}</span></td><td class="a"><span class="num ${t.kind === 'inc' ? 'pos' : ''}">${fmt(t.kind === 'inc' ? t.amt : t.amt)}</span></td><td class="a">${withSel === 'sub' ? xStatus([t]) : (xStatus([t]) || catSel(catStr(t), `data-t="${t.id}"`))}</td><td class="a">${t.virt ? '' : (catOf(t) === 'once' ? `<button class="x on" data-act="unonce" data-t="${t.id}" title="להחזיר לחישוב" aria-label="להחזיר לחישוב">↺</button>` : `<button class="x one" data-act="once" data-t="${t.id}" title="חד פעמי: להוציא מהחישוב והממוצע" aria-label="חד פעמי">חד פעמי</button>`)}${t.virt ? '' : `<button class="x" data-act="deltx" data-t="${t.id}" title="מחיקת שורת חיוב" aria-label="מחיקת שורת חיוב">×</button>`}</td></tr>`;
 }
 function listHTML(d){
   buildInstallments();
@@ -729,7 +736,8 @@ function crossDiag(cx){
   const ST = {ok:['הותאם', 'st-ok'], near:['הותאם עם הפרש', 'st-over'], cov:['מכוסה בתקופה', 'st-ok'], miss:['ללא פירוט', 'st-over']};
   const rows = settles.map(({s, st, g}) => { const c = st === 'miss' ? closest(s) : null; return `<tr><td>${esc(dFmt(s.date))}</td><td>${esc(s.desc)}</td><td><span class="num">${fmt(s.amt)}</span></td><td><span class="badge ${ST[st][1]}">${ST[st][0]}</span></td>
     <td class="small">${st === 'ok' || st === 'near' ? `פירוט ${esc(g.card ? 'כרטיס ' + g.card + ', ' : '')}חיוב ${esc(dFmt(g.cd))}: <span class="num">${fmt(g.sum)}</span>` : esc(why(s, c))}</td></tr>`; }).join('');
-  const grows = groups.slice().sort((a, b) => (a.cd || '') < (b.cd || '') ? -1 : 1).map(g => `<tr><td>${esc(g.card || '—')}</td><td>${esc(dFmt(g.cd))}</td><td>${g.n}</td><td><span class="num">${fmt(g.sum)}</span></td><td><span class="badge ${g.matched ? 'st-ok' : 'st-none'}">${g.matched ? 'נמצא בעו״ש' : 'לא נמצא בעו״ש'}</span></td></tr>`).join('');
+  const per = cl().rep.period, outside = g => !per || !g.cd ? '' : g.cd.slice(0, 7) > per.to ? 'יורד אחרי תקופת העו״ש (תקין)' : g.cd.slice(0, 7) < per.from ? 'ירד לפני תקופת העו״ש (תקין)' : '';
+  const grows = groups.slice().sort((a, b) => (a.cd || '') < (b.cd || '') ? -1 : 1).map(g => `<tr><td>${esc(g.card || '—')}</td><td>${esc(dFmt(g.cd))}</td><td>${g.n}</td><td><span class="num">${fmt(g.sum)}</span></td><td><span class="badge ${g.matched ? 'st-ok' : 'st-none'}">${g.matched ? 'נמצא בעו״ש' : outside(g) || 'לא נמצא בעו״ש'}</span></td></tr>`).join('');
   return `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;padding:10px 16px;font-weight:700">פירוט ההצלבה: כל חיוב אשראי בעו״ש מול הפירוטים שנטענו</summary>
     <div class="pad small">החיוב בעו״ש מותאם לפירוט כשהסכום זהה (עד ₪1) ותאריך החיוב בפירוט רחוק עד 12 יום מהחיוב בעו״ש.</div>
     <div class="scroll"><table class="lst"><thead><tr><th>תאריך בעו״ש</th><th>תיאור</th><th>סכום</th><th>מצב</th><th>פירוט / סיבה</th></tr></thead><tbody>${rows}</tbody></table></div>
