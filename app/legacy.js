@@ -77,7 +77,7 @@ function newMonth(label, from, copyBudgets){
   return m;
 }
 const newRep = () => ({sources:[], tx:[], rules:{}, excl:{}, cardBy:'tx', manualIncome:0, dupes:0, del:{}});
-function newClient(name){ const m = newMonth('חודש 1'); return {id:uid(), name:name, view:'load', monthId:m.id, months:[m], rep:newRep(), itemsRepaired:true}; }
+function newClient(name){ const m = newMonth('חודש 1'); return {id:uid(), name:name, view:ws && ws.clientMode ? 'load' : 'intake', monthId:m.id, months:[m], rep:newRep(), itemsRepaired:true}; }
 const validMonths = a => Array.isArray(a) && a.length > 0 && a.every(m => m && m.id && Array.isArray(m.income) && m.cats);
 function validWs(s){ return s && Array.isArray(s.clients) && s.clients.length > 0 && s.clients.every(c => c && c.id && validMonths(c.months) && c.rep && Array.isArray(c.rep.tx)); }
 function load(){
@@ -1055,7 +1055,7 @@ function helpView(){
     'בדוח, ליד כל סעיף, יש כפתור ״העברה לתקציב״: הסכום (הממוצע החודשי) נכנס לתקציב של החודש הראשון, באותה קטגוריה ובאותו סעיף. בקוביית המשתנות בחודש הראשון יש עמודת ״מצב מצוי״ לפני התקציב, עם הסכומים מהניתוח, והתקציב שלה נשאר ריק.',
     'בשיוך לקטגוריה אפשר להקליד חלק מהשם (למשל ״שכר״ או ״ביגוד״) ולבחור מהרשימה, בלי לגלול.',
     'עסקאות בתשלומים מוצגות בטבלה נפרדת בדוח: כמה תשלומים כבר ירדו, כמה נשארו, מה ההורדה החודשית ומתי זה מסתיים.',
-    'בלשונית ״שאלונים״ שולחים ללקוח קישור אישי לטופס התבנית החודשית. מה שהלקוח ממלא מוצפן אצלו בטלפון, מגיע לכאן, ונקלט לתיק בלחיצה. רק המכשיר שלך מחזיק את המפתח שפותח את הטפסים.',
+    'בלשונית ״תיק הלקוח״ שולחים ללקוח קישור אישי לטופס התבנית החודשית. מה שהלקוח ממלא מוצפן אצלו בטלפון, מגיע לכאן, ונקלט לתיק בלחיצה. רק המכשיר שלך מחזיק את המפתח שפותח את הטפסים.',
     'הנתונים נשמרים אוטומטית בדפדפן הזה בלבד. כל לקוח שפותח את הקישור במכשיר שלו מקבל מערכת ריקה. ב״לקוחות וגיבוי״ אפשר לייצא ללקוח קובץ של התיק שלו בלבד.'
   ];
   return `<section class="card help"><h2>איך משתמשים בניהול תזרים</h2><ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol></section>`;
@@ -1109,7 +1109,7 @@ function renderNav(){
   const c = cl(), v = c.view;
   const grp = REPV.includes(v) ? 'rep' : (TRKV.includes(v) ? 'trk' : v);
   const prim = (id, label, go) => `<button class="tab" data-act="go" data-v="${go}" ${grp === id ? 'aria-current="page"' : ''}>${label}</button>`;
-  let h = prim('rep', 'דוח ראשוני', REPV.includes(v) ? v : 'load') + prim('trk', 'מעקב חודשי', TRKV.includes(v) ? v : 'summary') + (ws.clientMode ? '' : prim('intake', 'שאלונים' + (window.CFIntake ? window.CFIntake.badge() : ''), 'intake')) + prim('help', 'הוראות', 'help') + prim('backup', 'לקוחות וגיבוי', 'backup') + `<button class="tab sp noprint" data-act="xlsx" title="ייצוא הדוחות של ${esc(c.name)} לקובץ Excel">⬇ ייצוא ל־Excel</button>`;
+  let h = (ws.clientMode ? '' : prim('intake', 'תיק הלקוח' + (window.CFIntake ? window.CFIntake.badge() : ''), 'intake')) + prim('rep', 'דוח ראשוני', REPV.includes(v) ? v : 'load') + prim('trk', 'מעקב חודשי', TRKV.includes(v) ? v : 'summary') + prim('help', 'הוראות', 'help') + prim('backup', 'לקוחות וגיבוי', 'backup') + `<button class="tab sp noprint" data-act="xlsx" title="ייצוא הדוחות של ${esc(c.name)} לקובץ Excel">⬇ ייצוא ל־Excel</button>`;
   document.getElementById('nav').innerHTML = h;
   let sub = '';
   if (grp === 'rep') sub = [['load', '1', 'טעינת תדפיסים'], ['fix', '2', 'הצלבה ושיוך'], ['report', '3', 'הדוח']].map(([id, n, l]) => `<button class="tab sm" data-act="go" data-v="${id}" ${v === id ? 'aria-current="page"' : ''}><span class="nb">${n}</span>${l}</button>`).join('');

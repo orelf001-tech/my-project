@@ -1,5 +1,5 @@
-// "שאלונים" tab: send clients a personal form link, receive encrypted submissions,
-// review them in the full coach view and import them into the client's file.
+// "תיק הלקוח" tab: everything about the client chosen at the top, step by step: the upload link and the
+// files the client sent, the initial report, the permanent monthly-report link, forms and links.
 //
 // Trust model: the server (Supabase) only ever holds ciphertext. The coach's private key is
 // created here, stored non-extractable in IndexedDB, and backed up wrapped with her passphrase.
@@ -55,7 +55,7 @@ const clients = () => cf.getWs().clients;
 const clientById = id => clients().find(c => c.id === id) || null;
 const isOpen = () => cf.cl().view === 'intake';
 function rerender() { if (isOpen()) cf.render(); else refreshBadge(); }
-function refreshBadge() { const t = document.querySelector('#nav [data-v="intake"]'); if (t) t.innerHTML = 'שאלונים' + badge(); }
+function refreshBadge() { const t = document.querySelector('#nav [data-v="intake"]'); if (t) t.innerHTML = 'תיק הלקוח' + badge(); }
 async function busy(label, fn) {
   if (st.busy) return;
   st.busy = label; st.err = ''; rerender();
@@ -267,7 +267,7 @@ async function decryptUpload(u) {
 // Decrypt the client's new files and feed them to the existing statement import (דוח ראשוני).
 async function importUploads(clientId, again) {
   const c = clientById(clientId); if (!c) throw new Error('client');
-  // "again" re-reads files that were already loaded; rows already in the report are skipped as duplicates
+  // "again" re-reads files that were already loaded and replaces what was loaded from them
   const list = uploadsOf(clientId).filter(u => again || !u.imported_at);
   if (!list.length) return;
   const files = [];
@@ -277,6 +277,11 @@ async function importUploads(clientId, again) {
     files.push(new File([C.b64uDecode(d.data)], d.label.replace(/[\\/:*?"<>|]/g, ' ') + ext));
   }
   cf.selectClient(c.id);
+  if (again) {
+    const names = new Set(files.map(f => f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ')));
+    const old = new Set(c.rep.sources.filter(x => names.has(x.name)).map(x => x.id));
+    c.rep.sources = c.rep.sources.filter(x => !old.has(x.id)); c.rep.tx = c.rep.tx.filter(t => !old.has(t.src));
+  }
   await cf.onFiles(files);          // the existing pipeline: detects columns, card vs bank, opens the report
   for (const u of list) await q(sb.from('upload_files').update({ imported_at: new Date().toISOString() }).eq('id', u.id));
   list.forEach(u => { u.imported_at = new Date().toISOString(); });
@@ -430,7 +435,8 @@ async function restoreBackup(id) {
 }
 
 /* ---------- views ---------- */
-export function badge() { const n = st.phase === 'ready' ? pending().length : 0; return n ? ` <span class="ibadge" aria-label="${n} טפסים חדשים">${n}</span>` : ''; }
+const newUploads = () => st.uploads.filter(u => !u.imported_at && st.links.some(l => l.id === u.link_id && clientById(l.client_ref)));
+export function badge() { const n = st.phase === 'ready' ? pending().length + newUploads().length : 0; return n ? ` <span class="ibadge" aria-label="${n} חדשים">${n}</span>` : ''; }
 
 function msgs() {
   return (st.msg ? `<div class="ok-box" role="status">${esc(st.msg)} <button class="xbtn sm" data-ia="dismiss" aria-label="סגירה">×</button></div>` : '')
@@ -502,9 +508,8 @@ function setupCard() {
   return '';
 }
 
-function sendCard() {
-  const cur = clientById(st.sendFor) || cf.cl();
-  const opts = clients().map(c => `<option value="${esc(c.id)}" ${c.id === cur.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+function portalCard() {
+  const cur = cf.cl();
   const row = portalRow(cur);
   const first = cur.name.split(' ')[0];
   const share = (url, text, title, idAttr = 'in-url') => `<input readonly class="linkurl" id="${idAttr}" value="${esc(url)}" dir="ltr" aria-label="הקישור">
@@ -531,53 +536,77 @@ function sendCard() {
       <label class="chk"><input type="checkbox" id="in-tpl" ${st.withTpl ? 'checked' : ''}> לצרף את התבנית החודשית למילוי ראשון</label>
       <p>${btn('portal-create', 'יצירת קישור אישי ללקוח/ה', `data-id="${esc(cur.id)}"`)}</p>`;
   }
-  return card('שליחה ללקוח', `<div class="igrid"><label>לקוח/ה <select id="in-client">${opts}</select></label></div>
-    ${uploadCard()}
-    <div class="istep"><h3>שלב 2 · אחרי הפגישה: קישור קבוע לדוח החודשי</h3>${body}</div>
+  return card('<span class="nb">3</span> אחרי הפגישה: קישור קבוע לדוח החודשי', `${body}
     <details class="small" id="in-tplonly" ${st.tplOpen ? 'open' : ''}><summary>שליחת תבנית בלבד, בלי דוח חודשי</summary>
       <div class="igrid"><label>תוקף הקישור <select id="in-days"><option value="7">שבוע</option><option value="14" selected>שבועיים</option><option value="30">חודש</option></select></label></div>
       <label class="chk"><input type="checkbox" id="in-prefill" checked> לצרף לטופס את הסעיפים מהתיק</label>
       <p>${btn('create', 'יצירת קישור לתבנית בלבד')}</p>
       ${st.created && !st.created.portal ? share(st.created.url, `שלום ${st.created.clientName.split(' ')[0]}, זה הקישור האישי שלך לתבנית התזרים החודשית. הטופס מוצפן ורק אני יכולה לקרוא אותו:\n${st.created.url}`, 'התבנית החודשית', 'in-url-tpl') : ''}
-    </details>`);
+    </details>`, 'step');
 }
 
-function uploadCard() {
-  const cur = clientById(st.sendFor) || cf.cl();
+function uploadCard(cur) {
   const created = st.uploadCreated && st.uploadCreated.clientId === cur.id ? st.uploadCreated : null;
   const text = created ? `שלום ${cur.name.split(' ')[0]}, כדי שאוכל לנתח את התזרים לפני הפגישה שלנו, צריך להעלות בקישור הזה:\n• פירוט עו״ש: 3 החודשים האחרונים המלאים, בקובץ Excel\n• פירוט כרטיסי אשראי: אותם 3 חודשים ועוד הפירוט של החודש הנוכחי (4 פירוטים), בשמות שמופיעים באתר חברת האשראי (למשל ״פירוט ספטמבר״), קובץ Excel לכל חודש ולכל כרטיס בנפרד\nבקישור יש הסבר איך מורידים את הקבצים. הקבצים מוצפנים, ורק אני יכולה לפתוח אותם:\n${created.url}` : '';
-  return `<div class="istep"><h3>שלב 1 · לקוח/ה חדש/ה: העלאת דוחות לניתוח</h3>
-    <p> הלקוח/ה מקבל/ת קישור עם הסבר מה להעלות: <b>פירוט אשראי</b> של 3 החודשים האחרונים המלאים ועוד הפירוט של החודש הנוכחי (שמשלים את הקניות של החודש האחרון), קובץ Excel לכל חודש ולכל כרטיס בנפרד, ו<b>פירוט עו״ש</b> של 3 חודשים. הקבצים נכנסים אצלך ל״דוח ראשוני״. אחרי הפגישה, כשהתקציב מוכן, שולחים את הקישור לדוח החודשי.</p>
-    <p>${btn('upload-create', 'יצירת קישור להעלאת דוחות', `data-id="${esc(cur.id)}"`)}</p>
+  const live = st.links.find(l => l.kind === 'upload' && l.client_ref === cur.id && !l.revoked_at && new Date(l.expires_at) > new Date());
+  const ups = uploadsOf(cur.id), fresh = ups.filter(u => !u.imported_at), loaded = ups.filter(u => u.imported_at);
+  const names = list => list.map(u => st.upDec[u.id] ? esc(st.upDec[u.id].label) : '<span class="note-s">מפענח…</span>').join('<br>');
+  let files = '';
+  if (fresh.length) files = `<div class="linkbox"><p><b>${fresh.length} קבצים חדשים מ${esc(cur.name)}</b>${live && live.submit_count ? ' · סיים/ה להעלות' : ' · עדיין מעלה'}</p>
+      <p class="small">${names(fresh)}</p><p>${btn('upload-import', 'טעינה לדוח הראשוני', `data-id="${esc(cur.id)}"`)}</p></div>`;
+  if (loaded.length) files += `<details class="small" ${fresh.length ? '' : 'open'}><summary>${loaded.length} קבצים שכבר נטענו לדוח</summary><p>${names(loaded)}</p>
+      <p>${btn('upload-reimport', 'טעינה מחדש', `data-id="${esc(cur.id)}"`, 'btn ghost')} <span class="small">קוראת שוב את הקבצים ומחליפה את מה שנטען מהם בדוח (שאר התדפיסים נשארים).</span></p></details>`;
+  return card('<span class="nb">1</span> דוחות לניתוח (לפני הפגישה)', `
+    ${ups.length ? files : `<p>הלקוח/ה מקבל/ת קישור עם הסבר מה להעלות: <b>פירוט עו״ש</b> של 3 החודשים האחרונים המלאים, ו<b>פירוט אשראי</b> של אותם חודשים ועוד הפירוט של החודש הנוכחי, קובץ Excel לכל חודש ולכל כרטיס בנפרד. כשהקבצים מגיעים, הם מופיעים כאן ותקבלי מייל.</p>
+      ${live ? `<p class="small">נשלח קישור ב־${esc(new Date(live.created_at).toLocaleDateString('he-IL'))}, הלקוח/ה עוד לא העלה/תה קבצים.</p>` : ''}`}
+    <p>${btn('upload-create', live ? 'יצירת קישור חדש להעלאה' : 'יצירת קישור להעלאת דוחות', `data-id="${esc(cur.id)}"`, live || ups.length ? 'btn ghost' : 'btn')}</p>
     ${created ? `<div class="linkbox"><p><b>הקישור של ${esc(cur.name)} מוכן</b> (בתוקף 30 יום).</p>
       <input readonly class="linkurl" id="in-url-up" value="${esc(created.url)}" dir="ltr" aria-label="הקישור">
       <div class="row-btns"><a class="btn" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener noreferrer">שליחה בוואטסאפ</a>
         <a class="btn" href="mailto:?subject=${encodeURIComponent('העלאת דוחות לניתוח')}&body=${encodeURIComponent(text)}">שליחה במייל</a>
-        <button class="btn ghost" data-ia="copy" data-url="${esc(created.url)}">העתקה</button></div></div>` : ''}</div>`;
+        <button class="btn ghost" data-ia="copy" data-url="${esc(created.url)}">העתקה</button></div></div>` : ''}`, 'step');
 }
 
-function uploadsInboxCard() {
-  const byClient = {};
-  st.uploads.filter(u => !u.imported_at).forEach(u => { const l = st.links.find(x => x.id === u.link_id); if (l) (byClient[l.client_ref] = byClient[l.client_ref] || []).push(u); });
-  const ids = Object.keys(byClient);
-  const done = {};
-  st.uploads.filter(u => u.imported_at).forEach(u => { const l = st.links.find(x => x.id === u.link_id); if (l && clientById(l.client_ref)) done[l.client_ref] = (done[l.client_ref] || 0) + 1; });
-  const again = Object.keys(done).filter(id => !byClient[id]);
-  const againHtml = again.length ? `<details class="small"><summary>דוחות שכבר נטענו (טעינה מחדש)</summary><div class="ilist">${again.map(id => `<div class="irow"><div><b>${esc(clientById(id).name)}</b></div><div class="small">${done[id]} קבצים</div><div>${btn('upload-reimport', 'טעינה מחדש', `data-id="${esc(id)}"`, 'btn ghost')}</div></div>`).join('')}</div>
-    <p class="small">טעינה מחדש קוראת שוב את הקבצים, ומוסיפה לדוח רק שורות שעוד לא נמצאות בו.</p></details>` : '';
-  if (!ids.length) return againHtml ? card('דוחות שהועלו', againHtml) : '';
-  return card(`דוחות שהועלו <span class="ibadge">${ids.reduce((a, id) => a + byClient[id].length, 0)}</span>`, `<div class="ilist">${ids.map(id => {
-    const c = clientById(id), list = byClient[id], link = st.links.find(x => x.id === list[0].link_id), meta = (link && st.linkMeta[link.id]) || {};
-    const names = list.map(u => st.upDec[u.id] ? st.upDec[u.id].label : null).filter(Boolean);
-    return `<div class="irow"><div><b>${esc((c && c.name) || meta.clientName || 'לקוח לא מזוהה')}</b><br><span class="small">${list.length} קבצים${link && link.submit_count ? ' · סיים/ה להעלות' : ' · עדיין מעלה'}</span></div>
-      <div class="small">${names.length ? names.map(esc).join(' · ') : '<button class="btn ghost sm" data-ia="upload-names" data-id="' + esc(id) + '">הצגת שמות הקבצים</button>'}</div>
-      <div>${c ? btn('upload-import', 'טעינה לדוח הראשוני', `data-id="${esc(id)}"`) : ''}</div></div>`;
-  }).join('')}</div><p class="small">הטעינה מפענחת את הקבצים במחשב שלך ומכניסה אותם ל״דוח ראשוני״ של הלקוח/ה, כמו גרירת תדפיסים.</p>${againHtml}`);
+function reportCard(c) {
+  const rep = c.rep, cx = cf.crossInfo(), per = rep.period;
+  const mm = k => { const [y, m] = k.split('-'); return m + '/' + y; };
+  if (!rep.sources.length) return card('<span class="nb">2</span> דוח ראשוני', `<p class="note-s">עוד לא נטענו תדפיסים. אחרי הטעינה (בשלב 1, או גרירת קבצים ב״דוח ראשוני״) יופיע כאן סיכום.</p>`, 'step');
+  const settles = cx.matched.length + cx.near.length + cx.covered.length + cx.unmatched.length;
+  const ok = cx.matched.length + cx.near.length + cx.covered.length;
+  const rows = rep.sources.map(x => `<tr><td>${esc(x.name)}</td><td>${x.type === 'card' ? 'אשראי' : 'עו״ש'}</td><td>${x.n}${!x.n && x.dup ? ' <span class="small">(כפול)</span>' : ''}</td></tr>`).join('');
+  return card('<span class="nb">2</span> דוח ראשוני', `
+    <p>${per ? `תקופת הדוח: <b>${esc(mm(per.from))} – ${esc(mm(per.to))}</b> (לפי העו״ש). ` : '<b>לא נטען עו״ש</b>, ולכן אין הכנסות ואין הצלבה. '}
+      ${settles ? (cx.unmatched.length ? `<span class="badge st-over">${cx.unmatched.length} חיובי אשראי בעו״ש בלי פירוט</span>` : `<span class="badge st-ok">כל ${ok} חיובי האשראי בעו״ש הוצלבו ✓</span>`) : ''}</p>
+    <details class="small"><summary>${rep.sources.length} תדפיסים נטענו</summary><table class="lst"><thead><tr><th>תדפיס</th><th>סוג</th><th>תנועות</th></tr></thead><tbody>${rows}</tbody></table></details>
+    <div class="row-btns"><button class="btn" data-act="go" data-v="report">פתיחת הדוח</button><button class="btn ghost" data-act="go" data-v="fix">הצלבה ושיוך</button><button class="btn ghost" data-act="go" data-v="load">התדפיסים</button></div>`, 'step');
 }
 
-function inboxCard() {
-  const list = pending();
-  if (!list.length) return card('טפסים שהתקבלו', '<p class="note-s">אין טפסים חדשים. כשלקוח ישלח טופס הוא יופיע כאן (בדיקה אוטומטית כל דקה).</p>');
+function journey(c) {
+  const ups = uploadsOf(c.id), fresh = ups.filter(u => !u.imported_at), anyUp = st.links.some(l => l.kind === 'upload' && l.client_ref === c.id);
+  const budget = c.months.some(m => Object.values(m.cats || {}).some(list => (list || []).some(i => +i.budget > 0)));
+  const row = portalRow(c), tracked = c.months.filter(m => !m.baseline).length;
+  const steps = [
+    ['דוחות לניתוח', fresh.length ? 'cur' : (ups.length || c.rep.sources.length ? 'done' : ''), fresh.length ? `${fresh.length} קבצים חדשים לטעינה` : ups.length ? `${ups.length} קבצים התקבלו` : anyUp ? 'נשלח קישור, מחכים לקבצים' : 'עוד לא נשלח קישור'],
+    ['דוח ראשוני', c.rep.sources.length ? 'done' : '', c.rep.sources.length ? `${c.rep.sources.length} תדפיסים` : 'עוד לא נטען'],
+    ['פגישה ותקציב', budget ? 'done' : '', budget ? 'יש תקציב' : 'עוד אין תקציב'],
+    ['קישור לדוח החודשי', row ? 'done' : '', row ? (row.client_seen_at ? 'הלקוח/ה נכנס/ה' : 'נשלח') : 'עוד לא נוצר'],
+    ['מעקב חודשי', tracked && row ? 'done' : '', tracked === 1 ? 'חודש אחד' : `${tracked} חודשים`]
+  ];
+  return `<ol class="journey">${steps.map(([t, cls, txt], i) => `<li class="${cls}"><span class="nb">${cls === 'done' ? '✓' : i + 1}</span><b>${t}</b><small>${esc(txt)}</small></li>`).join('')}</ol>`;
+}
+
+function othersCard(c) {
+  const att = clients().filter(x => x.id !== c.id).map(x => {
+    const n = uploadsOf(x.id).filter(u => !u.imported_at).length, f = pending().filter(s => (clientOfSub(s).client || {}).id === x.id).length;
+    return n || f ? `<div class="irow"><div><b>${esc(x.name)}</b></div><div class="small">${[n ? n + ' קבצים חדשים' : '', f ? f + ' טפסים חדשים' : ''].filter(Boolean).join(' · ')}</div><div><button class="btn ghost sm" data-act="pick" data-id="${esc(x.id)}">מעבר לתיק</button></div></div>` : '';
+  }).join('');
+  return att ? card('לקוחות אחרים שמחכים לך', `<div class="ilist">${att}</div>`) : '';
+}
+
+function inboxCard(c) {
+  // forms of this client, plus forms that could not be matched to any client
+  const list = pending().filter(s => { const o = clientOfSub(s).client; return !o || o.id === c.id; });
+  if (!list.length) return '';
   return card(`טפסים שהתקבלו <span class="ibadge">${list.length}</span>`, `<div class="ilist">${list.map(subRow).join('')}</div>`);
 }
 
@@ -591,8 +620,8 @@ function subRow(s) {
   </div>`;
 }
 
-function linksCard() {
-  const rows = st.links.slice(0, 60).map(l => {
+function linksCard(c) {
+  const rows = st.links.filter(l => l.client_ref === c.id).slice(0, 60).map(l => {
     const meta = st.linkMeta[l.id] || {}, c = clientById(l.client_ref), [label, cls] = linkStatus(l);
     const local = c && (c.formLinks || []).find(x => x.id === l.id);
     const live = !l.revoked_at && new Date(l.expires_at) > new Date() && l.submit_count < l.max_submissions;
@@ -600,7 +629,7 @@ function linksCard() {
       <td><span class="badge ${cls}">${label}</span></td>
       <td class="a">${live && local ? `<button class="btn ghost sm" data-ia="copy" data-url="${esc(local.url)}">העתקה</button>` : ''}${live ? (st.revokeArm === l.id ? `<button class="btn danger sm" data-ia="revoke-yes" data-id="${esc(l.id)}">לבטל?</button>` : `<button class="btn ghost sm" data-ia="revoke" data-id="${esc(l.id)}">ביטול</button>`) : ''}</td></tr>`;
   }).join('');
-  return card('קישורים שנשלחו', rows ? `<div class="scroll"><table class="lst"><thead><tr><th>לקוח/ה</th><th>סוג</th><th>נשלח</th><th>בתוקף עד</th><th>מצב</th><th class="a"></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="note-s">עוד לא נשלחו קישורים.</p>');
+  return card(`קישורים שנשלחו ל${esc(c.name)}`, rows ? `<div class="scroll"><table class="lst"><thead><tr><th>לקוח/ה</th><th>סוג</th><th>נשלח</th><th>בתוקף עד</th><th>מצב</th><th class="a"></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="note-s">עוד לא נשלחו קישורים.</p>');
 }
 
 function importedCard() {
@@ -683,11 +712,18 @@ export function view() {
   if (st.phase !== 'ready') return `<div class="intake">${msgs()}${setupView()}</div>`;
   const s = st.open && st.subs.find(x => x.id === st.open);
   if (s && st.dec[s.id] && st.dec[s.id].answers) return `<div class="intake">${msgs()}${detailView(s)}</div>`;
-  return `<div class="intake">${msgs()}${uploadsInboxCard()}${inboxCard()}${sendCard()}${linksCard()}${importedCard()}${securityCard()}</div>`;
+  const c = cf.cl();
+  return `<div class="intake">${msgs()}
+    <section class="card" style="margin-bottom:14px"><h2>התיק של ${esc(c.name)}</h2><div class="pad">${journey(c)}<p class="small">מחליפים לקוח בבחירה למעלה. כל מה שמוצג כאן שייך רק ללקוח/ה הזה/ו.</p></div></section>
+    ${othersCard(c)}${inboxCard(c)}${uploadCard(c)}${reportCard(c)}${portalCard()}${linksCard(c)}${importedCard()}${securityCard()}</div>`;
 }
 
+let naming = false;
 export function mounted() {
   if (st.phase === 'mfa-verify' || st.phase === 'mfa-enroll') { const i = document.querySelector('[data-iform="totp"] input'); if (i) i.focus(); }
+  // show the names of this client's files: decrypt them in the background, once
+  const todo = st.phase === 'ready' ? uploadsOf(cf.cl().id).filter(u => !st.upDec[u.id]) : [];
+  if (todo.length && !naming) { naming = true; (async () => { for (const u of todo) { try { await decryptUpload(u); } catch (_) { st.upDec[u.id] = { label: 'קובץ שלא נפתח', fileName: '', kind: 'bank', data: '' }; } } naming = false; rerender(); })(); }
 }
 
 /* ---------- events ---------- */
@@ -719,7 +755,6 @@ document.addEventListener('change', async e => {
     return rerender();
   }
   if (t.id === 'in-tpl') { st.withTpl = t.checked; return; }
-  if (t.id === 'in-client') { st.sendFor = t.value; st.created = null; rerender(); return; }
   if (t.id === 'in-tclient') { st.pickClient = t.value; st.pickMonth = null; rerender(); }
   if (t.id === 'in-tmonth') { st.pickMonth = t.value; }
 });
@@ -743,7 +778,7 @@ document.addEventListener('click', e => {
     case 'portal-revoke': st.revokePortal = id; rerender(); break;
     case 'portal-revoke-yes': st.revokePortal = null; busy('portal-revoke', () => revokePortal(id)); break;
     case 'create': {
-      const cid = document.getElementById('in-client').value, days = +document.getElementById('in-days').value, pre = document.getElementById('in-prefill').checked;
+      const cid = cf.cl().id, days = +document.getElementById('in-days').value, pre = document.getElementById('in-prefill').checked;
       busy('create', () => createLink(cid, pre, days)); break;
     }
     case 'copy': {

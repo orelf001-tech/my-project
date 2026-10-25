@@ -38,3 +38,11 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:var(-
 .isteps li.done{border-color:var(--good-fg);background:var(--good-bg);color:var(--good-fg)}
 .istep{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
 .istep h3{margin:0 0 8px;font-size:16px;color:var(--teal)}
+.journey{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;list-style:none;margin:0 0 10px;padding:0}
+.journey li{border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--field);display:flex;flex-direction:column;gap:3px;font-size:14px}
+.journey li small{color:var(--muted);font-size:13px}
+.journey li.done{border-color:var(--good-fg);background:var(--good-bg)}
+.journey li.cur{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 22%,var(--card))}
+.journey .nb,.card.step h2 .nb{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--card);font-size:13px;font-weight:700;margin-inline-end:6px}
+.journey li.done .nb{background:var(--good-fg);color:var(--card)}
+@media (max-width:760px){.journey{grid-template-columns:1fr 1fr}}
