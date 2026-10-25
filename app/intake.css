@@ -36,3 +36,5 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:var(-
 .isteps li{border:1px solid var(--line);border-radius:999px;padding:5px 14px;font-size:14px;color:var(--muted);background:var(--field)}
 .isteps li.cur{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 22%,var(--card));color:var(--ink);font-weight:700}
 .isteps li.done{border-color:var(--good-fg);background:var(--good-bg);color:var(--good-fg)}
+.istep{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.istep h3{margin:0 0 8px;font-size:16px;color:var(--teal)}

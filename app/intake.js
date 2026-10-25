@@ -10,6 +10,7 @@ import { keystore } from './keystore.js';
 import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, TRACK_IDS } from './shared/portal-core.js';
 
 const BOOK_CTX = 'cf-portal-book';
+const uploadBase = () => cfg.uploadUrl || String(cfg.formUrl || '').replace(/form\/?$/, 'upload/');
 const portalBase = () => cfg.portalUrl || String(cfg.formUrl || '').replace(/form\/?$/, 'portal/');
 
 const cf = window.__cf;
@@ -20,7 +21,7 @@ const POLL_MS = 60000;
 const BACKUP_EVERY_MS = 20 * 3600 * 1000;
 
 const st = {
-  portals: [], sendFor: null,
+  portals: [], sendFor: null, uploads: [], upDec: {},
   phase: 'init',          // noconfig | login | mfa-enroll | mfa-verify | denied | key-create | key-unlock | ready | error
   user: null, keys: [],   // keys: [{kid, publicRaw, privateKey}] newest first
   serverKeys: [],
@@ -169,12 +170,13 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 const keyFor = kid => st.keys.find(k => k.kid === kid);
 
 async function refresh() {
-  const [links, subs, portals] = await Promise.all([
-    q(sb.from('form_links').select('id,client_ref,kid,meta,created_at,expires_at,opened_at,last_submitted_at,revoked_at,submit_count,max_submissions').order('created_at', { ascending: false }).limit(300)),
+  const [links, subs, portals, uploads] = await Promise.all([
+    q(sb.from('form_links').select('id,client_ref,kid,kind,meta,created_at,expires_at,opened_at,last_submitted_at,revoked_at,submit_count,max_submissions').order('created_at', { ascending: false }).limit(300)),
     q(sb.from('submissions').select('id,link_id,envelope,created_at,imported_at').order('created_at', { ascending: false }).limit(300)),
-    q(sb.from('portals').select('id,client_ref,key_box,book,version,updated_by,updated_at,client_seen_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(500))
+    q(sb.from('portals').select('id,client_ref,key_box,book,version,updated_by,updated_at,client_seen_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(500)),
+    q(sb.from('upload_files').select('id,link_id,created_at,imported_at,bytes').order('created_at', { ascending: true }).limit(1000))
   ]);
-  st.links = links; st.subs = subs;
+  st.links = links; st.subs = subs; st.uploads = uploads;
   if (await syncPortals(portals) && !isOpen() && !typingInMain()) cf.render();
   for (const l of links) {
     if (st.linkMeta[l.id] || !l.meta) continue;
@@ -203,6 +205,13 @@ const pending = () => st.subs.filter(s => !s.imported_at);
 
 function linkStatus(l) {
   if (l.revoked_at) return ['בוטל', 'st-none'];
+  if (l.kind === 'upload') {
+    const n = st.uploads.filter(u => u.link_id === l.id).length;
+    if (l.submit_count > 0) return [`הועלו ${n} קבצים ✓`, 'st-ok'];
+    if (n) return [`הועלו ${n} קבצים, טרם סיים`, 'st-over'];
+    if (new Date(l.expires_at) < new Date()) return ['פג תוקף', 'st-none'];
+    return [l.opened_at ? 'נפתח, טרם הועלה' : 'נשלח', l.opened_at ? 'st-over' : 'st-none'];
+  }
   if (l.submit_count > 0) return [l.submit_count > 1 ? `הוגש ×${l.submit_count}` : 'הוגש', 'st-ok'];
   if (new Date(l.expires_at) < new Date()) return ['פג תוקף', 'st-none'];
   if (l.opened_at) return ['נפתח, טרם הוגש', 'st-over'];
@@ -227,6 +236,50 @@ async function createLink(clientId, withPrefill, days, silent) {
   st.created = { url, clientName: c.name, linkId: row.id };
   await refresh();
   return url;
+}
+
+/* ---------- new client: statement upload link ---------- */
+async function createUploadLink(clientId) {
+  const c = clientById(clientId); if (!c) throw new Error('client');
+  const key = st.keys[0];
+  const token = C.randomToken(16), hash = await C.sha256Hex(token);
+  const meta = await C.seal(key.publicRaw, { clientName: c.name, clientRef: c.id });
+  const expires = new Date(Date.now() + 30 * 86400000).toISOString();
+  const row = await q(sb.from('form_links').insert({ client_ref: c.id, kid: key.kid, kind: 'upload', token_hash: hash, meta, expires_at: expires, max_submissions: 20 }).select('id').single());
+  const url = uploadBase() + '#' + new URLSearchParams({ t: token, k: key.publicRaw }).toString();
+  c.formLinks = (c.formLinks || []).concat({ id: row.id, url, createdAt: new Date().toISOString(), expiresAt: expires, kind: 'upload' }).slice(-20);
+  cf.persist();
+  st.linkMeta[row.id] = { clientName: c.name, clientRef: c.id };
+  st.uploadCreated = { url, clientName: c.name, clientId: c.id };
+  await refresh();
+}
+
+const uploadsOf = clientId => st.uploads.filter(u => { const l = st.links.find(x => x.id === u.link_id); return l && l.client_ref === clientId; });
+
+async function decryptUpload(u) {
+  if (st.upDec[u.id]) return st.upDec[u.id];
+  const row = await q(sb.from('upload_files').select('envelope').eq('id', u.id).single());
+  const k = keyFor(row.envelope.kid); if (!k) throw new Error('אין במכשיר הזה מפתח שמתאים לקובץ');
+  const d = await C.open(row.envelope, k.privateKey, k.publicRaw);
+  return (st.upDec[u.id] = { label: String(d.label || d.fileName || 'קובץ').slice(0, 80), fileName: String(d.fileName || 'file.xlsx').slice(0, 120), kind: d.kind === 'card' ? 'card' : 'bank', data: d.data, size: d.size });
+}
+
+// Decrypt the client's new files and feed them to the existing statement import (דוח ראשוני).
+async function importUploads(clientId) {
+  const c = clientById(clientId); if (!c) throw new Error('client');
+  const list = uploadsOf(clientId).filter(u => !u.imported_at);
+  if (!list.length) return;
+  const files = [];
+  for (const u of list) {
+    const d = await decryptUpload(u);
+    const ext = (d.fileName.match(/\.(xlsx|xls|csv)$/i) || ['.xlsx'])[0];
+    files.push(new File([C.b64uDecode(d.data)], d.label.replace(/[\\/:*?"<>|]/g, ' ') + ext));
+  }
+  cf.selectClient(c.id);
+  await cf.onFiles(files);          // the existing pipeline: detects columns, card vs bank, opens the report
+  for (const u of list) await q(sb.from('upload_files').update({ imported_at: new Date().toISOString() }).eq('id', u.id));
+  list.forEach(u => { u.imported_at = new Date().toISOString(); });
+  backupNow(true).catch(() => {});
 }
 
 /* ---------- client portal: the client's own monthly report ---------- */
@@ -474,16 +527,46 @@ function sendCard() {
     body = `<p>הלקוח/ה מקבל/ת קישור קבוע אחד, ממנו:</p>
       <ul class="steps"><li>ממלאים פעם אחת את <b>התבנית החודשית</b> (אם מסמנים למטה).</li><li>ממלאים כל שבוע את <b>הדוח החודשי</b>, רואים את החודשים הקודמים ופותחים חודש חדש.</li></ul>
       <p class="small">מה שהלקוח/ה ממלא/ה מגיע מוצפן לתיק שלו/ה אצלך. הלקוח/ה לא רואה את המערכת שלך ולא לקוחות אחרים.</p>
-      <label class="chk"><input type="checkbox" id="in-tpl" ${(cur.forms || []).length ? '' : 'checked'}> לצרף את התבנית החודשית למילוי ראשון</label>
+      <label class="chk"><input type="checkbox" id="in-tpl" ${st.withTpl ? 'checked' : ''}> לצרף את התבנית החודשית למילוי ראשון</label>
       <p>${btn('portal-create', 'יצירת קישור אישי ללקוח/ה', `data-id="${esc(cur.id)}"`)}</p>`;
   }
-  return card('קישור אישי ללקוח', `<div class="igrid"><label>לקוח/ה <select id="in-client">${opts}</select></label></div>${body}
+  return card('שליחה ללקוח', `<div class="igrid"><label>לקוח/ה <select id="in-client">${opts}</select></label></div>
+    ${uploadCard()}
+    <div class="istep"><h3>שלב 2 · אחרי הפגישה: קישור קבוע לדוח החודשי</h3>${body}</div>
     <details class="small" id="in-tplonly" ${st.tplOpen ? 'open' : ''}><summary>שליחת תבנית בלבד, בלי דוח חודשי</summary>
       <div class="igrid"><label>תוקף הקישור <select id="in-days"><option value="7">שבוע</option><option value="14" selected>שבועיים</option><option value="30">חודש</option></select></label></div>
       <label class="chk"><input type="checkbox" id="in-prefill" checked> לצרף לטופס את הסעיפים מהתיק</label>
       <p>${btn('create', 'יצירת קישור לתבנית בלבד')}</p>
       ${st.created && !st.created.portal ? share(st.created.url, `שלום ${st.created.clientName.split(' ')[0]}, זה הקישור האישי שלך לתבנית התזרים החודשית. הטופס מוצפן ורק אני יכולה לקרוא אותו:\n${st.created.url}`, 'התבנית החודשית', 'in-url-tpl') : ''}
     </details>`);
+}
+
+function uploadCard() {
+  const cur = clientById(st.sendFor) || cf.cl();
+  const created = st.uploadCreated && st.uploadCreated.clientId === cur.id ? st.uploadCreated : null;
+  const text = created ? `שלום ${cur.name.split(' ')[0]}, כדי שאוכל לנתח את התזרים לפני הפגישה שלנו, צריך להעלות בקישור הזה:\n• פירוט כרטיסי אשראי: 3 החודשים האחרונים המלאים, קובץ Excel לכל חודש בנפרד (כל כרטיס בנפרד)\n• פירוט עו״ש: 3 החודשים האחרונים, בקובץ Excel\nבקישור יש הסבר איך מורידים את הקבצים. הקבצים מוצפנים, ורק אני יכולה לפתוח אותם:\n${created.url}` : '';
+  return `<div class="istep"><h3>שלב 1 · לקוח/ה חדש/ה: העלאת דוחות לניתוח</h3>
+    <p> הלקוח/ה מקבל/ת קישור עם הסבר מה להעלות: <b>פירוט אשראי</b> של 3 החודשים האחרונים המלאים, קובץ Excel לכל חודש ולכל כרטיס בנפרד, ו<b>פירוט עו״ש</b> של 3 חודשים. הקבצים נכנסים אצלך ל״דוח ראשוני״. אחרי הפגישה, כשהתקציב מוכן, שולחים את הקישור לדוח החודשי.</p>
+    <p>${btn('upload-create', 'יצירת קישור להעלאת דוחות', `data-id="${esc(cur.id)}"`)}</p>
+    ${created ? `<div class="linkbox"><p><b>הקישור של ${esc(cur.name)} מוכן</b> (בתוקף 30 יום).</p>
+      <input readonly class="linkurl" id="in-url-up" value="${esc(created.url)}" dir="ltr" aria-label="הקישור">
+      <div class="row-btns"><a class="btn" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener noreferrer">שליחה בוואטסאפ</a>
+        <a class="btn" href="mailto:?subject=${encodeURIComponent('העלאת דוחות לניתוח')}&body=${encodeURIComponent(text)}">שליחה במייל</a>
+        <button class="btn ghost" data-ia="copy" data-url="${esc(created.url)}">העתקה</button></div></div>` : ''}</div>`;
+}
+
+function uploadsInboxCard() {
+  const byClient = {};
+  st.uploads.filter(u => !u.imported_at).forEach(u => { const l = st.links.find(x => x.id === u.link_id); if (l) (byClient[l.client_ref] = byClient[l.client_ref] || []).push(u); });
+  const ids = Object.keys(byClient);
+  if (!ids.length) return '';
+  return card(`דוחות שהועלו <span class="ibadge">${ids.reduce((a, id) => a + byClient[id].length, 0)}</span>`, `<div class="ilist">${ids.map(id => {
+    const c = clientById(id), list = byClient[id], link = st.links.find(x => x.id === list[0].link_id), meta = (link && st.linkMeta[link.id]) || {};
+    const names = list.map(u => st.upDec[u.id] ? st.upDec[u.id].label : null).filter(Boolean);
+    return `<div class="irow"><div><b>${esc((c && c.name) || meta.clientName || 'לקוח לא מזוהה')}</b><br><span class="small">${list.length} קבצים${link && link.submit_count ? ' · סיים/ה להעלות' : ' · עדיין מעלה'}</span></div>
+      <div class="small">${names.length ? names.map(esc).join(' · ') : '<button class="btn ghost sm" data-ia="upload-names" data-id="' + esc(id) + '">הצגת שמות הקבצים</button>'}</div>
+      <div>${c ? btn('upload-import', 'טעינה לדוח הראשוני', `data-id="${esc(id)}"`) : ''}</div></div>`;
+  }).join('')}</div><p class="small">הטעינה מפענחת את הקבצים במחשב שלך ומכניסה אותם ל״דוח ראשוני״ של הלקוח/ה, כמו גרירת תדפיסים.</p>`);
 }
 
 function inboxCard() {
@@ -507,11 +590,11 @@ function linksCard() {
     const meta = st.linkMeta[l.id] || {}, c = clientById(l.client_ref), [label, cls] = linkStatus(l);
     const local = c && (c.formLinks || []).find(x => x.id === l.id);
     const live = !l.revoked_at && new Date(l.expires_at) > new Date() && l.submit_count < l.max_submissions;
-    return `<tr><td>${esc((c && c.name) || meta.clientName || '—')}</td><td>${esc(new Date(l.created_at).toLocaleDateString('he-IL'))}</td><td>${esc(new Date(l.expires_at).toLocaleDateString('he-IL'))}</td>
+    return `<tr><td>${esc((c && c.name) || meta.clientName || '—')}</td><td>${l.kind === 'upload' ? 'העלאת דוחות' : 'תבנית'}</td><td>${esc(new Date(l.created_at).toLocaleDateString('he-IL'))}</td><td>${esc(new Date(l.expires_at).toLocaleDateString('he-IL'))}</td>
       <td><span class="badge ${cls}">${label}</span></td>
       <td class="a">${live && local ? `<button class="btn ghost sm" data-ia="copy" data-url="${esc(local.url)}">העתקה</button>` : ''}${live ? (st.revokeArm === l.id ? `<button class="btn danger sm" data-ia="revoke-yes" data-id="${esc(l.id)}">לבטל?</button>` : `<button class="btn ghost sm" data-ia="revoke" data-id="${esc(l.id)}">ביטול</button>`) : ''}</td></tr>`;
   }).join('');
-  return card('קישורים שנשלחו', rows ? `<div class="scroll"><table class="lst"><thead><tr><th>לקוח/ה</th><th>נשלח</th><th>בתוקף עד</th><th>מצב</th><th class="a"></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="note-s">עוד לא נשלחו קישורים.</p>');
+  return card('קישורים שנשלחו', rows ? `<div class="scroll"><table class="lst"><thead><tr><th>לקוח/ה</th><th>סוג</th><th>נשלח</th><th>בתוקף עד</th><th>מצב</th><th class="a"></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="note-s">עוד לא נשלחו קישורים.</p>');
 }
 
 function importedCard() {
@@ -594,7 +677,7 @@ export function view() {
   if (st.phase !== 'ready') return `<div class="intake">${msgs()}${setupView()}</div>`;
   const s = st.open && st.subs.find(x => x.id === st.open);
   if (s && st.dec[s.id] && st.dec[s.id].answers) return `<div class="intake">${msgs()}${detailView(s)}</div>`;
-  return `<div class="intake">${msgs()}${inboxCard()}${sendCard()}${linksCard()}${importedCard()}${securityCard()}</div>`;
+  return `<div class="intake">${msgs()}${uploadsInboxCard()}${inboxCard()}${sendCard()}${linksCard()}${importedCard()}${securityCard()}</div>`;
 }
 
 export function mounted() {
@@ -629,6 +712,7 @@ document.addEventListener('change', async e => {
     } catch (_) { st.err = 'זה לא קובץ שחזור תקין.'; }
     return rerender();
   }
+  if (t.id === 'in-tpl') { st.withTpl = t.checked; return; }
   if (t.id === 'in-client') { st.sendFor = t.value; st.created = null; rerender(); return; }
   if (t.id === 'in-tclient') { st.pickClient = t.value; st.pickMonth = null; rerender(); }
   if (t.id === 'in-tmonth') { st.pickMonth = t.value; }
@@ -644,6 +728,9 @@ document.addEventListener('click', e => {
     case 'dismiss': st.msg = ''; st.err = ''; rerender(); break;
     case 'retry': st.phase = 'init'; st.err = ''; rerender(); advance(); break;
     case 'signout': busy('signout', async () => { stopPoll(); await sb.auth.signOut(); st.phase = 'login'; st.user = null; st.keys = []; st.dec = {}; st.linkMeta = {}; }); break;
+    case 'upload-create': busy('upload-create', () => createUploadLink(id)); break;
+    case 'upload-import': busy('upload-import', () => importUploads(id)); break;
+    case 'upload-names': busy('upload-names', async () => { for (const u of uploadsOf(id)) await decryptUpload(u); }); break;
     case 'portal-create': busy('portal-create', () => createPortal(id, document.getElementById('in-tpl').checked)); break;
     case 'portal-tpl': busy('portal-tpl', () => portalTemplate(id)); break;
     case 'portal-revoke': st.revokePortal = id; rerender(); break;
