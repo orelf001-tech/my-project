@@ -450,6 +450,7 @@ function importRaw(rawList, type, name, fileName){
   });
   add.forEach(t => { src.n++; src.total += t.kind === 'exp' ? t.amt : -t.amt; if (!src.from || t.date < src.from) src.from = t.date; if (!src.to || t.date > src.to) src.to = t.date; });
   src.total = r2(src.total);
+  src.dup = dupes;
   rep.sources.push(src); rep.tx.push(...add); rep.dupes = (rep.dupes || 0) + dupes;
   recomputeAll(); persist();
   return {added:add.length, dupes, src};
@@ -666,7 +667,7 @@ function startPending(type, fileName, tables){
 }
 function loadView(){
   const rep = cl().rep;
-  const srcRows = rep.sources.map(s => `<tr><td>${esc(s.name)}</td><td><span class="tag ${s.type}">${s.type === 'card' ? 'אשראי' : 'עו״ש'}</span></td><td>${s.from ? esc(s.from.split('-').reverse().join('/')) + ' – ' + esc(s.to.split('-').reverse().join('/')) : ''}</td><td>${s.n}</td><td><span class="num">${fmt(s.total)}</span></td><td><button class="btn ghost" data-act="delsrc" data-id="${s.id}">הסרה</button></td></tr>`).join('');
+  const srcRows = rep.sources.map(s => `<tr><td>${esc(s.name)}</td><td><span class="tag ${s.type}">${s.type === 'card' ? 'אשראי' : 'עו״ש'}</span></td><td>${s.from ? esc(s.from.split('-').reverse().join('/')) + ' – ' + esc(s.to.split('-').reverse().join('/')) : ''}</td><td>${s.n}${s.empty ? ' <span class="small">(אין עסקאות בחודש הזה)</span>' : (!s.n && s.dup ? ` <span class="small">(כל ${s.dup} העסקאות כבר נטענו מקובץ אחר)</span>` : (s.dup ? ` <span class="small">(${s.dup} כפולות דולגו)</span>` : ''))}</td><td><span class="num">${fmt(s.total)}</span></td><td><button class="btn ghost" data-act="delsrc" data-id="${s.id}">הסרה</button></td></tr>`).join('');
   const dz = (type, title, hint) => `<div class="card"><h2>${title}</h2><div class="pad">
       <p class="hint" style="margin:0">${hint}</p>
       <label class="filebtn"><input type="file" accept=".xlsx,.xls,.csv,.txt" data-file="${type}">בחירת קובץ (Excel או CSV)</label>
@@ -1215,23 +1216,34 @@ async function onFile(file, type){
 async function autoImportFile(file){
   const buf = await file.arrayBuffer(); const tables = readTables(buf, file.name);
   const best = tables.map((t, i) => ({i, det:detectMapping(t.rows)})).filter(x => x.det).sort((a, b) => b.det.score - a.det.score)[0];
-  if (!best) return {ok:false, tables, file:file.name};
+  const nameOf = () => file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+  // a statement for a month with no purchases ("אין עסקאות לחיוב בחודש יולי") is valid: load it as empty
+  const noTx = () => tables.some(t => t.rows.some(r => r.some(c => /אין\s+עסקאות|לא\s+נמצאו\s+עסקאות|אין\s+תנועות/.test(String(c)))));
+  if (!best) { if (noTx()) { const r = importRaw([], 'card', nameOf(), file.name); r.src.empty = true; persist(); return {ok:true, added:0, dupes:0, type:'card', name:r.src.name, empty:true}; } return {ok:false, tables, file:file.name}; }
   const det = best.det, hs = tables[best.i].rows[det.hdr].map(hnorm).join(' ');
   const type = (det.map.debit != null || det.map.credit != null || (/יתרה/.test(hs) && !/בית\s*ה?עסק/.test(hs))) ? 'bank' : 'card';
-  const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+  const name = nameOf();
   // Card exports often split one statement over several sheets (e.g. domestic and abroad).
   // Read every sheet that has a transaction table, so the total matches the bank charge.
+  // A sheet of another billing cycle (future / not yet charged) belongs to the next statement: only rows
+  // whose charge date is one of the main sheet's charge dates are taken from the other sheets.
+  const mainRows = normalizeTable(tables[best.i], det.hdr, det.map, type, 'neg', true);
+  const mainCd = new Set(mainRows.map(x => x.cd).filter(Boolean));
   const seenSheets = new Set();
   let raw = [];
-  tables.forEach((t, i) => {
-    const d = i === best.i ? det : detectMapping(t.rows); if (!d) return;
+  [best.i].concat(tables.map((t, i) => i).filter(i => i !== best.i)).forEach(i => {
+    const t = tables[i], d = i === best.i ? det : detectMapping(t.rows); if (!d) return;
     const sig = JSON.stringify(t.rows.slice(d.hdr)); if (seenSheets.has(sig)) return; seenSheets.add(sig);
-    const rows = normalizeTable(t, d.hdr, d.map, type, 'neg', true);
+    let rows = i === best.i ? mainRows : normalizeTable(t, d.hdr, d.map, type, 'neg', true);
+    if (i !== best.i && type === 'card') {
+      if (/עתיד|טרם|ממתינ|נדח/.test(t.name || '')) return;
+      if (mainCd.size && rows.some(x => x.cd)) rows = rows.filter(x => mainCd.has(x.cd));
+    }
     // a later sheet that repeats rows of an earlier one (an "all transactions" view) must not count twice
     const prev = {}; raw.forEach(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); prev[k] = (prev[k] || 0) + 1; });
     raw = raw.concat(rows.filter(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); if (prev[k]) { prev[k]--; return false; } return true; }));
   });
-  if (!raw.length) return {ok:false, tables, file:file.name};
+  if (!raw.length) { if (noTx()) { const r = importRaw([], type, name, file.name); r.src.empty = true; persist(); return {ok:true, added:0, dupes:0, type, name, empty:true}; } return {ok:false, tables, file:file.name}; }
   const r = importRaw(raw, type, name, file.name);
   return {ok:true, added:r.added, dupes:r.dupes, type, name};
 }
@@ -1240,6 +1252,8 @@ async function onFiles(files){
   for (const f of list) { try { const r = await autoImportFile(f); if (r.ok) done.push(r); else failed.push({f, r}); } catch(e) { failed.push({f, r:null, err:e}); } }
   const c = cl();
   ui.msg = done.length ? `נטענו ${done.length} תדפיסים (${done.reduce((a, r) => a + r.added, 0)} תנועות${done.some(r => r.dupes) ? ', כפולות דולגו' : ''}).` : '';
+  const empties = done.filter(r => r.empty);
+  if (empties.length) ui.msg += ` ${empties.map(r => `״${r.name}״`).join(', ')}: כתוב בקובץ שאין עסקאות לחיוב בחודש הזה, ולכן נטען ריק. זה תקין.`;
   if (failed.length) {
     const ff = failed[0];
     if (ff.r && ff.r.tables) { startPending('card', ff.f.name, ff.r.tables); ui.msg += ` לא הצלחתי לזהות את העמודות בקובץ ״${ff.f.name}״. אפשר לסמן אותן ידנית כאן.`; c.view = 'load'; }
