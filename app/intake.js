@@ -7,7 +7,7 @@ import * as C from './shared/crypto.js';
 import { SECTIONS, BY_ID, normalizeAnswers, LIMITS } from './shared/template.js';
 import { buildPrefill, prefillMonth, applyAnswers, compare, insights, summaryText } from './intake-core.js';
 import { keystore } from './keystore.js';
-import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, TRACK_IDS } from './shared/portal-core.js';
+import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, catIdsOf } from './shared/portal-core.js';
 
 const BOOK_CTX = 'cf-portal-book';
 const uploadBase = () => cfg.uploadUrl || String(cfg.formUrl || '').replace(/form\/?$/, 'upload/');
@@ -290,7 +290,7 @@ async function importUploads(clientId, again) {
 
 /* ---------- client portal: the client's own monthly report ---------- */
 const typingInMain = () => { const a = document.activeElement; return !!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.closest('#main')); };
-const localBook = c => bookFromMonths(c.months, { clientName: c.name, ...((c.portal && c.portal.meta) || {}) });
+const localBook = c => bookFromMonths(c.months, { clientName: c.name, ...((c.portal && c.portal.meta) || {}), extraCats: c.extraCats || [] });
 const portalRow = c => (c && c.portal ? st.portals.find(p => p.id === c.portal.id && !p.revoked_at) : null) || null;
 
 // Write a merged book back into the coach's months, keeping coach-only fields of each row.
@@ -302,7 +302,7 @@ function applyBook(c, book, base) {
     if (!m) { m = cf.newMonth(bm.label); m.id = bm.id; c.months.push(m); }
     m.label = bm.label;
     m.income = bm.income.map(it => ({ ...((m.income || []).find(x => x.id === it.id) || {}), ...it }));
-    TRACK_IDS.forEach(id => { const old = m.cats[id] || []; m.cats[id] = bm.cats[id].map(it => ({ ...(old.find(x => x.id === it.id) || {}), ...it })); });
+    catIdsOf(book).forEach(id => { const old = m.cats[id] || []; m.cats[id] = (bm.cats[id] || []).map(it => ({ ...(old.find(x => x.id === it.id) || {}), ...it })); });
   });
   if (!c.months.length) c.months.push(cf.newMonth('חודש 1'));
   if (!c.months.some(m => m.id === c.monthId)) c.monthId = c.months[0].id;

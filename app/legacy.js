@@ -46,6 +46,36 @@ const GROUPS = [
   {id:'vr',  name:'הוצאות משתנות', cats:['var','trn','med','oth','abr']},
   {id:'mv',  name:'מזומן והעברות', cats:['cash','apps','trf']}
 ];
+/* Categories the coach adds for one client (e.g. "הוצאות עסק"). While that client is open they are appended to
+   the shared lists above, so the picker, the report, the budget months and the export all include them. */
+let catsSig = null;
+function applyClientCats(c){
+  const list = (c && c.extraCats) || [], sig = (c ? c.id : '') + '|' + list.map(x => x.id + ':' + x.name).join(',');
+  if (sig === catsSig) return; catsSig = sig;
+  [CATS, EXP, TRK_EXP, GROUPS].forEach(arr => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i].custom) arr.splice(i, 1); });
+  Object.keys(BY).forEach(k => { if (BY[k].custom) delete BY[k]; });
+  const defs = list.map(x => ({id:x.id, name:x.name, color:'D6CFE0', kind:'fixed', custom:true}));
+  defs.forEach(d => { CATS.push(d); EXP.push(d); TRK_EXP.push(d); BY[d.id] = d; });
+  if (defs.length) GROUPS.push({id:'cus', name:'קטגוריות של הלקוח', cats:defs.map(d => d.id), custom:true});
+  if (c) c.months.forEach(m => defs.forEach(d => { if (!m.cats[d.id]) m.cats[d.id] = []; }));
+  const dl = typeof document !== 'undefined' && document.getElementById('catDL'); if (dl) dl.remove();
+}
+function addClientCat(name){
+  const c = cl(); name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 40); if (!name) return 'צריך לכתוב שם לקטגוריה.';
+  if (CATS.concat(PSEUDO).some(x => x.name === name)) return 'כבר יש קטגוריה בשם הזה.';
+  c.extraCats = (c.extraCats || []).concat({id:'x' + uid().replace(/[^a-z0-9]/g, '').slice(0, 10), name});
+  applyClientCats(c); persist(); return '';
+}
+function catInUse(id){
+  const c = cl(), rep = c.rep;
+  return rep.tx.some(t => String(catStr(t)).split('/')[0] === id) || Object.values(rep.rules || {}).some(v => String(v).split('/')[0] === id)
+    || c.months.some(m => (m.cats[id] || []).some(it => num(it.budget) || num(it.paid) || (it.w || []).some(num)));
+}
+function delClientCat(id){
+  const c = cl(); if (catInUse(id)) return false;
+  c.extraCats = (c.extraCats || []).filter(x => x.id !== id); c.months.forEach(m => { delete m.cats[id]; });
+  applyClientCats(c); persist(); return true;
+}
 const TGROUPS_OF = () => GROUPS.map(g => ({id:g.id, name:g.name, cats:g.cats.filter(id => !NOT_IN_MONTHS.includes(id))})).filter(g => g.cats.length);
 const DEFAULTS = {
   inc:{items:['משכורת','משכורת','קצבת ילדים','עסק','הכנסה נוספת','הכנסה נוספת'], spare:0},
@@ -72,7 +102,7 @@ function newMonth(label, from, copyBudgets){
     EXP.forEach(c => { m.cats[c.id] = (from.cats[c.id] || []).map(it => { const n = mkItem(it.label); if (copyBudgets) n.budget = num(it.budget); if (it.end) n.end = it.end; return n; }); });
   } else {
     m.income = DEFAULTS.inc.items.map(l => ({id:uid(), label:l, amount:0}));
-    EXP.forEach(c => { const d = DEFAULTS[c.id]; m.cats[c.id] = d.items.map(mkItem).concat(Array.from({length:d.spare}, () => mkItem(''))); });
+    EXP.forEach(c => { const d = DEFAULTS[c.id] || {items:[], spare:2}; m.cats[c.id] = d.items.map(mkItem).concat(Array.from({length:d.spare}, () => mkItem(''))); });
   }
   return m;
 }
@@ -459,6 +489,7 @@ function crossCheck(rep){
 }
 
 function recomputeAll(){
+  applyClientCats(cl());
   const rep = cl().rep;
   rep.tx.forEach(t => { t.ac = autoCat(t, rep.rules); });
   crossCheck(rep);
@@ -554,6 +585,7 @@ function installmentsHTML(){
 /* ================= the report ================= */
 function monthOfTx(t, rep){ const d = (t.type === 'card' && t.cd && (rep.cardBy === 'cd' || t.inst)) ? t.cd : t.date; return d.slice(0, 7); }
 function buildReport(){
+  applyClientCats(cl());
   const rep = cl().rep, M = {}, SM = {}, keys = new Set();
   let minD = null, maxD = null;
   rep.tx.forEach(t => {
@@ -599,7 +631,7 @@ function catLabel(s){
   return sub ? b.name + ' › ' + sub : b.name + ((SUBLIST[c] || []).length ? ' (כללי)' : '');
 }
 function labelToCat(v){ v = String(v || '').trim(); if (!v) return null; for (const x of allCats()) if (x === v || catLabel(x) === v) return x; return null; }
-function ensureDatalist(){ if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
+function ensureDatalist(){ applyClientCats(cl()); if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
 const xStatus = items => {
   const st = items.filter(t => t.settle && !t.man); if (!st.length || st.length !== items.length || st.some(t => !t.x)) return '';
   const gap = r2(st.reduce((a, t) => a + (t.gap || 0), 0));
@@ -745,9 +777,17 @@ function crossDiag(cx){
     <div class="scroll"><table class="lst"><thead><tr><th>כרטיס</th><th>תאריך חיוב</th><th>עסקאות</th><th>סה״כ</th><th></th></tr></thead><tbody>${grows || '<tr><td colspan="5">—</td></tr>'}</tbody></table></div>
   </details>`;
 }
+function catsPanel(){
+  const c = cl(), list = c.extraCats || [];
+  return `<div class="card noprint" style="margin-bottom:14px"><h2>קטגוריות מיוחדות ללקוח הזה</h2><div class="pad">
+    <p class="small">למשל ״הוצאות עסק״ או ״הוצאות על הורים״. הקטגוריה נוספת רק ל${esc(c.name)}: אפשר לשייך אליה שורות, היא מופיעה בדוח, בתקציב ובדוח החודשי של הלקוח/ה.</p>
+    ${list.length ? `<div class="row-btns">${list.map(x => `<span class="tag">${esc(x.name)} ${ui.delCatArm === x.id ? `<button class="x" data-act="delcat-yes" data-id="${x.id}" title="למחוק" aria-label="למחוק">למחוק?</button>` : `<button class="x" data-act="delcat" data-id="${x.id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה">×</button>`}</span>`).join('')}</div>` : ''}
+    <div class="row-btns"><input type="text" id="newcat" maxlength="40" placeholder="שם הקטגוריה החדשה" aria-label="שם הקטגוריה החדשה"><button class="btn" data-act="addcat">+ הוספת קטגוריה</button>${ui.catMsg ? `<span class="note-s">${esc(ui.catMsg)}</span>` : ''}</div>
+  </div></div>`;
+}
 function fixView(){
   const rep = cl().rep;
-  if (!rep.tx.length) return `<section class="card"><h2>הצלבה ושיוך</h2><div class="pad">עוד לא נטענו תדפיסים. <button class="btn" data-act="go" data-v="load">לטעינת תדפיסים</button></div></section>`;
+  if (!rep.tx.length) return `<section class="card" style="margin-bottom:14px"><h2>הצלבה ושיוך</h2><div class="pad">עוד לא נטענו תדפיסים. <button class="btn" data-act="go" data-v="load">לטעינת תדפיסים</button></div></section>${catsPanel()}`;
   const cx = crossRes, haveBank = rep.sources.some(s => s.type === 'bank'), haveCard = rep.sources.some(s => s.type === 'card');
   const unsList = rep.tx.filter(t => catOf(t) === 'uns'), unsSum = unsList.filter(t => t.kind === 'exp').reduce((a, t) => a + t.amt, 0);
   const expAll = rep.tx.filter(t => { const c = catOf(t); return c !== 'skip' && c !== 'inc' && t.kind === 'exp'; }).reduce((a, t) => a + t.amt, 0);
@@ -767,6 +807,7 @@ function fixView(){
       <div class="stat"><small>עדיין ללא שיוך</small><b class="num">${unsList.length}</b><em>${fmt0(unsSum)} הוצאות${expAll ? ' · ' + pct(unsSum / expAll) + ' מההוצאות' : ''}${unsCred.length ? ` · ${unsCred.length} זיכויים (${fmt0(unsCredSum)}) שלא נספרו כהכנסה` : ''}</em></div>
       <div class="stat"><small>תנועות כפולות שדולגו</small><b class="num">${rep.dupes || 0}</b><em>מקבצים שחופפים בתקופה</em></div>
     </div>
+    ${catsPanel()}
     ${!haveBank ? `<div class="warn-box">לא נטען תדפיס עו״ש, ולכן אין נתוני הכנסות ולא בוצעה הצלבה מול הבנק. <button class="btn" data-act="go" data-v="load">לטעינת עו״ש</button></div>` : ''}
     ${haveBank && !haveCard && cx.unmatched.length ? `<div class="warn-box">בעו״ש יש חיובי כרטיס אשראי, אבל לא נטענו תדפיסי אשראי. החיובים נשארים ללא שיוך עד שיטענו. <button class="btn" data-act="go" data-v="load">לטעינת אשראי</button></div>` : ''}
     ${cx.unmatched.length && haveCard ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>בעו״ש יש ${cx.unmatched.length} חיובי אשראי, בין ${esc(dFmt(unDates[0]))} ל-${esc(dFmt(unDates[unDates.length - 1]))}, בסך ${fmt0(missingSum)}, שאין להם פירוט בתדפיסי האשראי שנטענו.</b><span>כנראה חסר תדפיס אשראי לתקופה הזו. עד שייטען, החיובים נשארים ב״ללא שיוך״ ונספרים כהוצאה.</span><ul style="margin:0;padding-inline-start:20px">${miss}</ul></div>` : ''}
@@ -1132,6 +1173,7 @@ function renderPanel(){
 }
 function renderDrill(){ const o = document.getElementById('overlay'); if (o) o.innerHTML = drillView(); }
 function render(){
+  applyClientCats(cl()); ensureDatalist();
   renderHero(); renderNav(); renderPanel();
   const main = document.getElementById('main'), c = cl(), v = c.view;
   if (REPV.includes(v)) { recomputeIfNeeded(); }
@@ -1357,6 +1399,9 @@ document.addEventListener('click', async e => {
     case 'cancel': ui.panel = null; renderPanel(); renderHero(); break;
     case 'create': doCreate(); break;
     case 'createclient': createClient(); break;
+    case 'addcat': { const inp = document.getElementById('newcat'); ui.catMsg = addClientCat(inp && inp.value); ui.delCatArm = null; render(); break; }
+    case 'delcat': ui.delCatArm = b.dataset.id; ui.catMsg = ''; render(); break;
+    case 'delcat-yes': ui.catMsg = delClientCat(b.dataset.id) ? '' : 'אי אפשר למחוק: יש שורות או תקציב בקטגוריה הזו. קודם מעבירים אותם לקטגוריה אחרת.'; ui.delCatArm = null; render(); break;
     case 'pick': ws.cid = b.dataset.id; ui.pending = null; ui.drill = null; crossFor = null; persist(); render(); break;
     case 'delclient': ui.delClientArm = b.dataset.id; render(); break;
     case 'delclient-yes': { ws.clients = ws.clients.filter(x => x.id !== b.dataset.id); if (!ws.clients.length) ws.clients.push(newClient('לקוח/ה 1')); if (!ws.clients.some(x => x.id === ws.cid)) ws.cid = ws.clients[0].id; ui.delClientArm = null; crossFor = null; persist(); render(); break; }
@@ -1415,7 +1460,7 @@ document.addEventListener('click', async e => {
 document.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
 document.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); onFiles(e.dataTransfer.files); } });
 window.__cf = {
-  cl, persist, render, newMonth, mkItem, uid, num, esc, fmt, fmt0, validWs, newClient, monthTot, EXP, TRK_EXP, BY, NOT_IN_MONTHS,
+  cl, persist, render, applyClientCats, addClientCat, newMonth, mkItem, uid, num, esc, fmt, fmt0, validWs, newClient, monthTot, EXP, TRK_EXP, BY, NOT_IN_MONTHS,
   addClient:name => { const c = newClient(name); ws.clients.push(c); persist(); return c; },
   selectClient:id => { if (ws.clients.some(x => x.id === id)) { ws.cid = id; ui.panel = null; ui.drill = null; ui.pending = null; crossFor = null; persist(); } },
   setWs:s => { if (!validWs(s)) throw new Error('invalid'); try { const cur = localStorage.getItem(KEY2), list = snapshots(); if (cur) { list.push({t:new Date().toISOString(), data:cur}); while (list.length > 7) list.shift(); localStorage.setItem(SNAPKEY, JSON.stringify(list)); } } catch(_) {} ws = s; crossFor = null; ui.pending = null; ui.drill = null; persist(); render(); },

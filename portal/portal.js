@@ -138,6 +138,8 @@ function rowsHtml(m, s) {
   }).join('');
 }
 
+// the fixed categories, plus any the coach added for this client (filled once a month, like fixed expenses)
+const sections = () => SECTIONS.concat(((P.local && P.local.extraCats) || []).map(x => ({ id: x.id, name: x.name, title: x.name, color: 'D6CFE0', kind: 'money', items: [], track: 'קטגוריה שהמאמנת הוסיפה עבורך. ממלאים פעם בחודש, או כשיש הוצאה.' })));
 function sectionCard(m, s, t) {
   const tot = s.income ? t.inc : t.per[s.id].p, bud = s.income ? 0 : t.per[s.id].b;
   return `<details class="card sec" data-color="${s.color}" data-sec="${s.id}" ${P.open.has(s.id) ? 'open' : ''}>
@@ -164,7 +166,7 @@ function render(scroll = true) {
   else {
     const t = monthTotals(m);
     body += `<p class="tip">💡 בוחרים יום קבוע בשבוע (שבת, ראשון או שני) ל״הנהלת חשבונות ביתית״, ובו ממלאים את ההוצאות של השבוע. הוצאות חודשיות ממלאים פעם בחודש. הכל נשמר אוטומטית.</p>`
-      + summary(t) + SECTIONS.map(s => sectionCard(m, s, t)).join('');
+      + summary(t) + sections().map(s => sectionCard(m, s, t)).join('');
   }
   body += `<div class="pstatus" id="pstatus" role="status">${esc(P.status)}</div>`;
   app.innerHTML = body;
@@ -175,7 +177,7 @@ function render(scroll = true) {
 function refreshTotals() {
   const m = curMonth(); if (!m) return;
   const t = monthTotals(m);
-  SECTIONS.forEach(s => { const el = app.querySelector(`[data-stot="${s.id}"]`); if (el) el.textContent = fmt(s.income ? t.inc : t.per[s.id].p); });
+  sections().forEach(s => { const el = app.querySelector(`[data-stot="${s.id}"]`); if (el) el.textContent = fmt(s.income ? t.inc : t.per[s.id].p); });
   const set = (k, v) => { const el = app.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = fmt(v); };
   set('inc', t.inc); set('paid', t.paid); set('left', t.left);
   const l = app.querySelector('[data-sum="left"]'); if (l) { l.classList.toggle('neg', t.left < 0); l.classList.toggle('pos', t.left >= 0); }

@@ -36,13 +36,19 @@ const cleanItem = (it, cat) => {
 };
 
 // Coach months -> book (only the fields that are shared with the client).
+// Categories the coach added for one client (e.g. business expenses): {id: 'x…', name}
+export const cleanExtraCats = list => (Array.isArray(list) ? list : []).filter(x => x && /^x[a-z0-9]{2,24}$/.test(x.id))
+  .slice(0, 20).map(x => ({ id: x.id, name: String(x.name || '').slice(0, 40) }));
+export const catIdsOf = book => TRACK_IDS.concat(cleanExtraCats(book && book.extraCats).map(x => x.id));
+
 export function bookFromMonths(months, extra = {}) {
+  const extraCats = cleanExtraCats(extra.extraCats), ids = TRACK_IDS.concat(extraCats.map(x => x.id));
   return {
-    type: BOOK_TYPE, v: 1, ...extra,
+    type: BOOK_TYPE, v: 1, ...extra, extraCats,
     months: months.filter(m => !m.locked).map(m => ({
       id: String(m.id), label: String(m.label || ''),
       income: (m.income || []).map(it => cleanItem(it, 'inc')),
-      cats: Object.fromEntries(TRACK_IDS.map(id => [id, (m.cats[id] || []).map(it => cleanItem(it, id))]))
+      cats: Object.fromEntries(ids.map(id => [id, ((m.cats || {})[id] || []).map(it => cleanItem(it, id))]))
     }))
   };
 }
@@ -50,7 +56,7 @@ export function bookFromMonths(months, extra = {}) {
 export function normalizeBook(b) {
   const o = b && typeof b === 'object' ? b : {};
   return bookFromMonths(Array.isArray(o.months) ? o.months.map(m => ({ ...m, cats: m.cats || {} })) : [],
-    { clientName: String(o.clientName || '').slice(0, 80), templateUrl: typeof o.templateUrl === 'string' ? o.templateUrl.slice(0, 600) : '', templateDone: !!o.templateDone });
+    { clientName: String(o.clientName || '').slice(0, 80), templateUrl: typeof o.templateUrl === 'string' ? o.templateUrl.slice(0, 600) : '', templateDone: !!o.templateDone, extraCats: o.extraCats });
 }
 
 function mergeScalar(b, l, r, key, localSide) {
@@ -87,16 +93,19 @@ function mergeList(bL = [], lL = [], rL = [], mergeOne) {
 
 export function mergeBooks(base, local, remote, localSide) {
   const b = base || { months: [] };
+  // the coach owns the list of extra categories
+  const extraCats = cleanExtraCats((localSide === 'coach' ? local : remote).extraCats);
+  const ids = TRACK_IDS.concat(extraCats.map(x => x.id));
   const months = mergeList(b.months, local.months, remote.months, (bm, lm, rm) => ({
     id: lm.id,
     label: mergeScalar(bm && bm.label, lm.label, rm.label, 'label', localSide),
     income: mergeList(bm && bm.income, lm.income, rm.income, (x, y, z) => mergeObj(x, y, z, localSide)),
-    cats: Object.fromEntries(TRACK_IDS.map(id => [id, mergeList(bm && bm.cats[id], lm.cats[id], rm.cats[id], (x, y, z) => mergeObj(x, y, z, localSide))]))
+    cats: Object.fromEntries(ids.map(id => [id, mergeList(bm && bm.cats[id], lm.cats[id], rm.cats[id], (x, y, z) => mergeObj(x, y, z, localSide))]))
   }));
   const meta = mergeObj({ clientName: b.clientName, templateUrl: b.templateUrl, templateDone: b.templateDone },
     { clientName: local.clientName, templateUrl: local.templateUrl, templateDone: local.templateDone },
     { clientName: remote.clientName, templateUrl: remote.templateUrl, templateDone: remote.templateDone }, localSide);
-  return normalizeBook({ ...meta, months });
+  return normalizeBook({ ...meta, extraCats, months });
 }
 
 export const booksEqual = (a, b) => same(normalizeBook(a), normalizeBook(b));
@@ -121,8 +130,8 @@ export function newMonthFrom(book, label) {
   return {
     id: uid(), label,
     income: last ? last.income.map(it => ({ ...it, id: uid(), amount: 0 })) : SECTIONS[0].items.map(l => ({ id: uid(), label: l, amount: 0 })),
-    cats: Object.fromEntries(TRACK_IDS.map(id => [id, last ? (last.cats[id] || []).map(copy)
-      : (SECTIONS.find(s => s.id === id).items.map(l => ({ id: uid(), label: l, budget: 0, paid: 0, w: [0, 0, 0, 0, 0], note: '' })))]))
+    cats: Object.fromEntries(catIdsOf(book).map(id => [id, last ? (last.cats[id] || []).map(copy)
+      : ((SECTIONS.find(s => s.id === id) || { items: [] }).items.map(l => ({ id: uid(), label: l, budget: 0, paid: 0, w: [0, 0, 0, 0, 0], note: '' })))]))
   };
 }
 
@@ -134,7 +143,7 @@ export function monthTotals(m) {
   const inc = (m.income || []).reduce((a, it) => a + n0(it.amount), 0);
   let budget = 0, paid = 0;
   const per = {};
-  TRACK_IDS.forEach(id => {
+  TRACK_IDS.concat(Object.keys(m.cats || {}).filter(id => !TRACK_IDS.includes(id))).forEach(id => {
     const b = (m.cats[id] || []).reduce((a, it) => a + n0(it.budget), 0);
     const p = (m.cats[id] || []).reduce((a, it) => a + (WEEKLY.has(id) ? (it.w || []).reduce((x, y) => x + n0(y), 0) : n0(it.paid)), 0);
     per[id] = { b, p }; budget += b; paid += p;

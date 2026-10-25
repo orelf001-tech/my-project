@@ -89,3 +89,20 @@ test('monthTotals', () => {
   const t = P.monthTotals(book([month('m', 'x', { var: [item('a', 'מזון', { budget: 2000, w: [500, 300, 0, 0, 0] })], hou: [item('h', 'שכר דירה', { budget: 4000, paid: 4000 })] }, [{ id: 'i', label: 'm', amount: 10000 }])]).months[0]);
   assert.deepEqual([t.inc, t.budget, t.paid, t.left], [10000, 6000, 4800, 5200]);
 });
+
+test('a category the coach added for one client travels in the book and merges', () => {
+  const extraCats = [{ id: 'xbiz1', name: 'הוצאות עסק' }, { id: 'bad id', name: 'x' }];
+  const coach = P.bookFromMonths([month('m1', 'אוקטובר', { xbiz1: [item('b', 'רואה חשבון', { budget: 400 })], hou: [] })], { extraCats });
+  assert.deepEqual(coach.extraCats, [{ id: 'xbiz1', name: 'הוצאות עסק' }], 'invalid ids are dropped');
+  assert.equal(coach.months[0].cats.xbiz1[0].budget, 400);
+  const base = P.normalizeBook(clone(coach)), client = clone(base);
+  client.months[0].cats.xbiz1[0].paid = 380;
+  client.extraCats = [];                                    // the client cannot remove the coach's category
+  const merged = P.mergeBooks(base, coach, client, 'coach');
+  assert.deepEqual(merged.extraCats, [{ id: 'xbiz1', name: 'הוצאות עסק' }]);
+  assert.equal(merged.months[0].cats.xbiz1[0].paid, 380);
+  assert.equal(P.monthTotals(merged.months[0]).per.xbiz1.p, 380, 'counted in the month totals');
+  const next = P.newMonthFrom(merged, 'נובמבר');
+  assert.deepEqual(next.cats.xbiz1.map(r => [r.label, r.budget, r.paid]), [['רואה חשבון', 400, 0]]);
+  assert.deepEqual(P.normalizeBook({ months: [month('m', 'x')] }).extraCats, [], 'old books have none');
+});
