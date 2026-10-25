@@ -399,8 +399,9 @@ function buildTx(raw, src, type){
 /* cross-check of credit-card settlements in the bank account against card statements */
 let crossRes = {matched:[], unmatched:[], near:[], covered:[], groups:[], cardUnmatched:[]};
 function crossCheck(rep){
+  const oldGap = {}; rep.tx.forEach(t => { if (t.virt && t.man) oldGap[t.id] = t.cat; });
   rep.tx = rep.tx.filter(t => !t.virt);
-  rep.tx.forEach(t => { t.x = null; });
+  rep.tx.forEach(t => { t.x = null; delete t.gap; });
   const groups = {}, cards = rep.tx.filter(t => t.type === 'card'), cardIds = new Set(cards.map(t => t.card).filter(Boolean));
   cards.forEach(t => { const k = (t.card || '') + '|' + (t.cd || ''); const g = groups[k] || (groups[k] = {k, src:t.src, card:t.card || '', cd:t.cd, sum:0, n:0, matched:false}); g.sum += (t.kind === 'exp' ? t.amt : -t.amt); g.n++; });
   const gl = Object.values(groups).map(g => { g.sum = r2(g.sum); return g; });
@@ -420,11 +421,14 @@ function crossCheck(rep){
     for (let i = 0; i < gl.length && !pair; i++) { if (gl[i].matched) continue; for (let j = i + 1; j < gl.length; j++) { if (gl[j].matched) continue; if (Math.abs(gl[i].sum + gl[j].sum - s.amt) <= 1.01 && [gl[i], gl[j]].every(g => sameCard(g, s) && near12(g, s))) { pair = [gl[i], gl[j]]; break; } } }
     if (pair) { pair.forEach(g => { g.matched = true; }); s.x = pair.map(g => g.k).join('+'); res.matched.push({s, g:pair[0]}); continue; }
     const near = gl.filter(g => !g.matched && sameCard(g, s) && near12(g, s)).map(g => ({g, diff:r2(s.amt - g.sum)})).filter(x => Math.abs(x.diff) > 1.01 && Math.abs(x.diff) <= Math.max(300, s.amt * 0.06)).sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))[0];
-    if (near) { near.g.matched = true; s.x = near.g.k; res.near.push({s, g:near.g, diff:near.diff}); continue; }
+    if (near) { near.g.matched = true; s.x = near.g.k; s.gap = near.diff; res.near.push({s, g:near.g, diff:near.diff}); continue; }
     if (covered(s)) { s.x = 'covered'; res.covered.push(s); continue; }
     res.unmatched.push(s);
   }
   res.cardUnmatched = gl.filter(g => !g.matched);
+  // the gap between a bank charge and its card statement is real money: it stays in the report as its own row
+  res.near.forEach(({s, diff}) => { const id = s.id + 'g', cat = oldGap[id];
+    rep.tx.push({id, virt:true, src:s.src, type:'bank', date:s.date, cd:'', desc:'פער הצלבה: ' + s.desc, amt:Math.abs(diff), kind:diff > 0 ? 'exp' : 'inc', ex:'', ic:'', key:'', rk:'gap|' + id, card:'', pa:0, fx:false, settle:false, inst:false, ac:'uns', man:cat != null, cat:cat == null ? null : cat, x:null}); });
   crossRes = res; return res;
 }
 
@@ -566,6 +570,11 @@ function catLabel(s){
 }
 function labelToCat(v){ v = String(v || '').trim(); if (!v) return null; for (const x of allCats()) if (x === v || catLabel(x) === v) return x; return null; }
 function ensureDatalist(){ if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
+const xStatus = items => {
+  const st = items.filter(t => t.settle && !t.man); if (!st.length || st.length !== items.length || st.some(t => !t.x)) return '';
+  const gap = r2(st.reduce((a, t) => a + (t.gap || 0), 0));
+  return Math.abs(gap) > 0.005 ? `<span class="badge st-over" title="סכום הפער נשאר בדוח כשורה נפרדת ״פער הצלבה״">הוצלב · פער ${fmt(gap)}</span>` : '<span class="badge st-ok">הוצלב ✓</span>';
+};
 const catSel = (sel, attrs) => `<input class="cs pick" list="catDL" ${attrs} data-cur="${esc(sel)}" value="${esc(catLabel(sel))}" placeholder="הקלידי קטגוריה או סעיף" aria-label="קטגוריה" autocomplete="off">`;
 function nvBtn(label, view, cls){ return `<button class="tab ${cls || ''}" data-act="go" data-v="${view}">${label}</button>`; }
 
@@ -579,7 +588,7 @@ function txMatch(t, d){
 }
 const srcName = id => { const s = cl().rep.sources.find(x => x.id === id); return s ? s.name : ''; };
 function txRow(t, withSel){
-  return `<tr class="${withSel === 'sub' ? 'sub' : ''}"><td>${esc(t.date.split('-').reverse().join('/'))}</td><td>${esc(t.desc)}${t.inst ? ` <span class="tag">${instMap[t.id] && instMap[t.id].N ? 'תשלום ' + instMap[t.id].n + ' מתוך ' + instMap[t.id].N : 'תשלומים'}</span>` : ''}${t.settle ? (t.x ? ' <span class="tag">חיוב אשראי (הוצלב)</span>' : ' <span class="tag">חיוב אשראי ללא פירוט</span>') : ''}${t.kind === 'inc' ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a"><span class="tag ${t.type}">${t.type === 'card' ? 'אשראי' : 'עו״ש'}</span> <span class="small">${esc(srcName(t.src))}</span></td><td class="a"><span class="num ${t.kind === 'inc' ? 'pos' : ''}">${fmt(t.kind === 'inc' ? t.amt : t.amt)}</span></td><td class="a">${withSel === 'sub' ? '' : catSel(catStr(t), `data-t="${t.id}"`)}</td><td class="a">${t.virt ? '' : (catOf(t) === 'once' ? `<button class="x on" data-act="unonce" data-t="${t.id}" title="להחזיר לחישוב" aria-label="להחזיר לחישוב">↺</button>` : `<button class="x one" data-act="once" data-t="${t.id}" title="חד פעמי: להוציא מהחישוב והממוצע" aria-label="חד פעמי">חד פעמי</button>`)}${t.virt ? '' : `<button class="x" data-act="deltx" data-t="${t.id}" title="מחיקת שורת חיוב" aria-label="מחיקת שורת חיוב">×</button>`}</td></tr>`;
+  return `<tr class="${withSel === 'sub' ? 'sub' : ''}"><td>${esc(t.date.split('-').reverse().join('/'))}</td><td>${esc(t.desc)}${t.inst ? ` <span class="tag">${instMap[t.id] && instMap[t.id].N ? 'תשלום ' + instMap[t.id].n + ' מתוך ' + instMap[t.id].N : 'תשלומים'}</span>` : ''}${t.settle ? (t.x ? '' : ' <span class="tag">חיוב אשראי ללא פירוט</span>') : ''}${t.virt ? ' <span class="tag">ההפרש בין החיוב בעו״ש לפירוט</span>' : ''}${t.kind === 'inc' ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a"><span class="tag ${t.type}">${t.type === 'card' ? 'אשראי' : 'עו״ש'}</span> <span class="small">${esc(srcName(t.src))}</span></td><td class="a"><span class="num ${t.kind === 'inc' ? 'pos' : ''}">${fmt(t.kind === 'inc' ? t.amt : t.amt)}</span></td><td class="a">${withSel === 'sub' ? xStatus([t]) : (xStatus([t]) || catSel(catStr(t), `data-t="${t.id}"`))}</td><td class="a">${t.virt ? '' : (catOf(t) === 'once' ? `<button class="x on" data-act="unonce" data-t="${t.id}" title="להחזיר לחישוב" aria-label="להחזיר לחישוב">↺</button>` : `<button class="x one" data-act="once" data-t="${t.id}" title="חד פעמי: להוציא מהחישוב והממוצע" aria-label="חד פעמי">חד פעמי</button>`)}${t.virt ? '' : `<button class="x" data-act="deltx" data-t="${t.id}" title="מחיקת שורת חיוב" aria-label="מחיקת שורת חיוב">×</button>`}</td></tr>`;
 }
 function listHTML(d){
   buildInstallments();
@@ -594,7 +603,7 @@ function listHTML(d){
     gl.slice(0, ui.limit).forEach(g => {
       const topCat = Object.keys(g.cats).sort((a, b) => g.cats[b] - g.cats[a])[0], mixed = Object.keys(g.cats).length > 1;
       const open = !!ui.open[g.rk];
-      rows += `<tr class="gr"><td colspan="2"><button class="cell" data-act="gtoggle" data-g="${esc(g.rk)}" aria-expanded="${open}">${open ? '▾' : '◂'} ${esc(g.name)}</button> <span class="small">(${g.n} ${g.n === 1 ? 'תנועה' : 'תנועות'}${mixed ? ', שיוך מעורב' : ''})</span></td><td class="a">${g.items[0].type === 'card' ? '<span class="tag card">אשראי</span>' : '<span class="tag bank">עו״ש</span>'}</td><td class="a"><span class="num">${fmt(g.items.every(t => t.kind === 'inc') ? -g.sum : g.sum)}</span>${g.items.every(t => t.kind === 'inc') ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a">${catSel(topCat, `data-g="${esc(g.rk)}"`)}</td><td></td></tr>`;
+      rows += `<tr class="gr"><td colspan="2"><button class="cell" data-act="gtoggle" data-g="${esc(g.rk)}" aria-expanded="${open}">${open ? '▾' : '◂'} ${esc(g.name)}</button> <span class="small">(${g.n} ${g.n === 1 ? 'תנועה' : 'תנועות'}${mixed ? ', שיוך מעורב' : ''})</span></td><td class="a">${g.items[0].type === 'card' ? '<span class="tag card">אשראי</span>' : '<span class="tag bank">עו״ש</span>'}</td><td class="a"><span class="num">${fmt(g.items.every(t => t.kind === 'inc') ? -g.sum : g.sum)}</span>${g.items.every(t => t.kind === 'inc') ? ' <span class="tag">זיכוי</span>' : ''}</td><td class="a">${xStatus(g.items) || catSel(topCat, `data-g="${esc(g.rk)}"`)}</td><td></td></tr>`;
       if (open) rows += g.items.slice().sort((a, b) => a.date < b.date ? 1 : -1).map(t => txRow(t, 'sub')).join('');
       shown++;
     });
