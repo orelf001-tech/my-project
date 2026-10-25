@@ -1039,7 +1039,7 @@ function renderNav(){
   const c = cl(), v = c.view;
   const grp = REPV.includes(v) ? 'rep' : (TRKV.includes(v) ? 'trk' : v);
   const prim = (id, label, go) => `<button class="tab" data-act="go" data-v="${go}" ${grp === id ? 'aria-current="page"' : ''}>${label}</button>`;
-  let h = prim('rep', 'דוח ראשוני', REPV.includes(v) ? v : 'load') + prim('trk', 'מעקב חודשי', TRKV.includes(v) ? v : 'summary') + (ws.clientMode ? '' : prim('intake', 'שאלונים' + (window.CFIntake ? window.CFIntake.badge() : ''), 'intake')) + prim('help', 'הוראות', 'help') + prim('backup', 'לקוחות וגיבוי', 'backup');
+  let h = prim('rep', 'דוח ראשוני', REPV.includes(v) ? v : 'load') + prim('trk', 'מעקב חודשי', TRKV.includes(v) ? v : 'summary') + (ws.clientMode ? '' : prim('intake', 'שאלונים' + (window.CFIntake ? window.CFIntake.badge() : ''), 'intake')) + prim('help', 'הוראות', 'help') + prim('backup', 'לקוחות וגיבוי', 'backup') + `<button class="tab sp noprint" data-act="xlsx" title="ייצוא הדוחות של ${esc(c.name)} לקובץ Excel">⬇ ייצוא ל־Excel</button>`;
   document.getElementById('nav').innerHTML = h;
   let sub = '';
   if (grp === 'rep') sub = [['load', '1', 'טעינת תדפיסים'], ['fix', '2', 'הצלבה ושיוך'], ['report', '3', 'הדוח']].map(([id, n, l]) => `<button class="tab sm" data-act="go" data-v="${id}" ${v === id ? 'aria-current="page"' : ''}><span class="nb">${n}</span>${l}</button>`).join('');
@@ -1326,6 +1326,7 @@ window.__cf = {
   selectClient:id => { if (ws.clients.some(x => x.id === id)) { ws.cid = id; ui.panel = null; ui.drill = null; ui.pending = null; crossFor = null; persist(); } },
   setWs:s => { if (!validWs(s)) throw new Error('invalid'); try { const cur = localStorage.getItem(KEY2), list = snapshots(); if (cur) { list.push({t:new Date().toISOString(), data:cur}); while (list.length > 7) list.shift(); localStorage.setItem(SNAPKEY, JSON.stringify(list)); } } catch(_) {} ws = s; crossFor = null; ui.pending = null; ui.drill = null; persist(); render(); },
   workspaceJson:() => JSON.stringify(ws),
+  catStr, srcName, mLabel, recomputeIfNeeded,
 transfer, ensureBudgetMonth, labelToCat, catLabel, onFiles, buildInstallments, importFile:(buf, fileName, type, name) => { const tables = readTables(buf, fileName); startPending(type, fileName, tables); ui.pending.name = name; const p = ui.pending; const raw = normalizeTable(p.tables[p.ti], p.hdr, p.map, p.type, p.sign, p.all); const r = importRaw(raw, type, name, fileName); ui.pending = null; return r; }, buildReport, crossInfo:() => crossRes, catOf, nextHeader, mapRow, parseDelimited, detectMapping, normalizeTable, parseDate, numParse, readTables, decodeText, mkey, getWs:() => ws};
 ensureDatalist();
 render();
