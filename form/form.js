@@ -153,6 +153,7 @@ function doneView() {
     <h2 tabindex="-1" id="h">הטופס נשלח. תודה!</h2>
     <p>המידע הגיע מוצפן למאמנת, והטיוטה נמחקה מהמכשיר הזה.</p>
     ${S.remaining > 0 ? '<p class="unit">שכחת משהו? אפשר לחזור לטופס, לתקן ולשלוח שוב.</p><button class="btn" data-act="again">חזרה לטופס</button>' : ''}
+    ${/(^|[#&])b=1(&|$)/.test(location.hash) ? '<p><button class="btn primary" data-act="backportal">חזרה לדוח החודשי</button></p>' : ''}
   </section>`;
 }
 
@@ -195,6 +196,7 @@ app.addEventListener('click', async e => {
     case 'delrow': S.answers.sections[b.dataset.s].splice(+b.dataset.r, 1); saveDraft(); render(null); break;
     case 'again': S.done = false; S.step = STEPS.length - 1; S.consent = false; render(); break;
     case 'send': await send(); break;
+    case 'backportal': history.back(); break;
   }
 });
 
