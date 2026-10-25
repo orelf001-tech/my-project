@@ -676,6 +676,35 @@ function loadView(){
 
 /* ================= view: report step 2 (cross-check + assignment) ================= */
 const fixD = () => ({cat:'uns', group:ui.fixGroup, q:ui.fixQ});
+// Explain the credit-card cross-check line by line, so a missing match can be understood.
+function crossDiag(cx){
+  const dFmt = s => s ? s.split('-').reverse().join('/') : '—';
+  const dd = (a, b) => Math.abs((Date.parse(a) - Date.parse(b)) / 864e5);
+  const groups = cx.groups || [];
+  const anyCd = groups.some(g => g.cd);
+  const settles = [].concat(cx.matched.map(m => ({s:m.s, st:'ok', g:m.g})), cx.near.map(n => ({s:n.s, st:'near', g:n.g})), (cx.covered || []).map(s => ({s, st:'cov'})), cx.unmatched.map(s => ({s, st:'miss'})))
+    .sort((a, b) => a.s.date < b.s.date ? -1 : 1);
+  const closest = s => groups.map(g => ({g, diff:r2(s.amt - g.sum), days:g.cd ? dd(g.cd, s.date) : null})).sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))[0];
+  const why = (s, c) => {
+    if (!groups.length) return 'לא נטען פירוט אשראי';
+    if (!anyCd) return 'בקובצי האשראי אין עמודת ״תאריך חיוב״, ולכן אי אפשר לשייך חיוב לפירוט';
+    if (!c) return '';
+    if (c.days != null && c.days > 12) return `הפירוט הקרוב ביותר בסכום יורד ב־${dFmt(c.g.cd)}, רחוק מתאריך החיוב בעו״ש`;
+    if (Math.abs(c.diff) > 1.01) return `אין פירוט באותו סכום. הקרוב ביותר: ${fmt(c.g.sum)} (חיוב ${dFmt(c.g.cd)}${c.g.card ? ', כרטיס ' + c.g.card : ''}), הפרש ${fmt(c.diff)}`;
+    if (c.g.card && s.card && c.g.card !== s.card) return `הסכום תואם, אבל הכרטיס שונה (${s.card} מול ${c.g.card})`;
+    return '';
+  };
+  const ST = {ok:['הותאם', 'st-ok'], near:['הותאם עם הפרש', 'st-over'], cov:['מכוסה בתקופה', 'st-ok'], miss:['ללא פירוט', 'st-over']};
+  const rows = settles.map(({s, st, g}) => { const c = st === 'miss' ? closest(s) : null; return `<tr><td>${esc(dFmt(s.date))}</td><td>${esc(s.desc)}</td><td><span class="num">${fmt(s.amt)}</span></td><td><span class="badge ${ST[st][1]}">${ST[st][0]}</span></td>
+    <td class="small">${st === 'ok' || st === 'near' ? `פירוט ${esc(g.card ? 'כרטיס ' + g.card + ', ' : '')}חיוב ${esc(dFmt(g.cd))}: <span class="num">${fmt(g.sum)}</span>` : esc(why(s, c))}</td></tr>`; }).join('');
+  const grows = groups.slice().sort((a, b) => (a.cd || '') < (b.cd || '') ? -1 : 1).map(g => `<tr><td>${esc(g.card || '—')}</td><td>${esc(dFmt(g.cd))}</td><td>${g.n}</td><td><span class="num">${fmt(g.sum)}</span></td><td><span class="badge ${g.matched ? 'st-ok' : 'st-none'}">${g.matched ? 'נמצא בעו״ש' : 'לא נמצא בעו״ש'}</span></td></tr>`).join('');
+  return `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;padding:10px 16px;font-weight:700">פירוט ההצלבה: כל חיוב אשראי בעו״ש מול הפירוטים שנטענו</summary>
+    <div class="pad small">החיוב בעו״ש מותאם לפירוט כשהסכום זהה (עד ₪1) ותאריך החיוב בפירוט רחוק עד 12 יום מהחיוב בעו״ש.</div>
+    <div class="scroll"><table class="lst"><thead><tr><th>תאריך בעו״ש</th><th>תיאור</th><th>סכום</th><th>מצב</th><th>פירוט / סיבה</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="pad"><b>הפירוטים שנטענו (לפי כרטיס ותאריך חיוב)</b></div>
+    <div class="scroll"><table class="lst"><thead><tr><th>כרטיס</th><th>תאריך חיוב</th><th>עסקאות</th><th>סה״כ</th><th></th></tr></thead><tbody>${grows || '<tr><td colspan="5">—</td></tr>'}</tbody></table></div>
+  </details>`;
+}
 function fixView(){
   const rep = cl().rep;
   if (!rep.tx.length) return `<section class="card"><h2>הצלבה ושיוך</h2><div class="pad">עוד לא נטענו תדפיסים. <button class="btn" data-act="go" data-v="load">לטעינת תדפיסים</button></div></section>`;
@@ -703,6 +732,7 @@ function fixView(){
     ${cx.unmatched.length && haveCard ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>בעו״ש יש ${cx.unmatched.length} חיובי אשראי, בין ${esc(dFmt(unDates[0]))} ל-${esc(dFmt(unDates[unDates.length - 1]))}, בסך ${fmt0(missingSum)}, שאין להם פירוט בתדפיסי האשראי שנטענו.</b><span>כנראה חסר תדפיס אשראי לתקופה הזו. עד שייטען, החיובים נשארים ב״ללא שיוך״ ונספרים כהוצאה.</span><ul style="margin:0;padding-inline-start:20px">${miss}</ul></div>` : ''}
     ${cx.near.length ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>חיובי אשראי בעו״ש שהותאמו לתדפיס עם הפרש קטן (לא נספרים, כי הפירוט מופיע בתדפיס):</b><ul style="margin:0;padding-inline-start:20px">${nearRows}</ul></div>` : ''}
     ${(cx.covered || []).length ? `<div class="ok-box">${cx.covered.length} חיובי אשראי נוספים בעו״ש (${fmt0(covSum)}) לא נספרו, כי יש תדפיס אשראי לאותה תקופה והפירוט כבר בדוח. אפשר לראות אותם בקטגוריה ״לא נספר״. <button class="btn ghost" data-act="drill" data-cat="skip">הצגה</button></div>` : ''}
+    ${haveBank && haveCard ? crossDiag(cx) : ''}
     <div class="card"><h2>שורות חיוב ללא שיוך</h2>
       <div class="bar2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)"><input type="text" id="fq" value="${esc(ui.fixQ)}" placeholder="חיפוש בית עסק" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--field)">${drillControls({group:ui.fixGroup})}
         <span style="flex:1"></span><button class="btn ghost" data-act="drill" data-cat="all">כל התנועות</button><button class="btn" data-act="go" data-v="report">לדוח ←</button></div>
@@ -1180,7 +1210,18 @@ async function autoImportFile(file){
   const det = best.det, hs = tables[best.i].rows[det.hdr].map(hnorm).join(' ');
   const type = (det.map.debit != null || det.map.credit != null || (/יתרה/.test(hs) && !/בית\s*ה?עסק/.test(hs))) ? 'bank' : 'card';
   const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
-  const raw = normalizeTable(tables[best.i], det.hdr, det.map, type, 'neg', true);
+  // Card exports often split one statement over several sheets (e.g. domestic and abroad).
+  // Read every sheet that has a transaction table, so the total matches the bank charge.
+  const seenSheets = new Set();
+  let raw = [];
+  tables.forEach((t, i) => {
+    const d = i === best.i ? det : detectMapping(t.rows); if (!d) return;
+    const sig = JSON.stringify(t.rows.slice(d.hdr)); if (seenSheets.has(sig)) return; seenSheets.add(sig);
+    const rows = normalizeTable(t, d.hdr, d.map, type, 'neg', true);
+    // a later sheet that repeats rows of an earlier one (an "all transactions" view) must not count twice
+    const prev = {}; raw.forEach(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); prev[k] = (prev[k] || 0) + 1; });
+    raw = raw.concat(rows.filter(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); if (prev[k]) { prev[k]--; return false; } return true; }));
+  });
   if (!raw.length) return {ok:false, tables, file:file.name};
   const r = importRaw(raw, type, name, file.name);
   return {ok:true, added:r.added, dupes:r.dupes, type, name};
