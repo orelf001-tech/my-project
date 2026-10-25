@@ -2,7 +2,7 @@
 .months{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
 .chip{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:8px 16px;cursor:pointer;font-weight:600;font-size:15px;min-height:42px}
 .chip.on{background:var(--banner);border-color:var(--sage)}
-.chip.add{border-style:dashed;color:var(--teal)}
+.chip.addm{border-style:dashed;color:var(--teal)}
 .newm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:15px}
 .btn.sm{padding:8px 14px;min-height:40px;font-size:15px}
 .tip{background:color-mix(in srgb,var(--gold) 16%,var(--card));border:1px solid var(--gold);border-radius:12px;padding:10px 14px;font-size:15px;margin:0 0 12px}
@@ -38,3 +38,12 @@ details.sec[open]>summary .sh::after{transform:rotate(180deg)}
 details.sec>summary .sh b{flex:1}
 details.sec>summary small{color:var(--ink);opacity:.75;font-size:14px}
 details.sec .track{margin:0;padding:10px 16px;font-size:15px;background:color-mix(in srgb,var(--cat) calc(var(--catmix) * .25),var(--card));border-bottom:1px solid var(--line)}
+/* computer screens: wider page, each weekly row on one line */
+@media (min-width:900px){
+  body.portal .wrap{max-width:1100px}
+  .prow.wk{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,3fr);gap:14px;align-items:center}
+  .wkh{grid-template-columns:minmax(0,1fr) auto auto 40px}
+  .weeks{margin-top:0}
+  .prow{grid-template-columns:minmax(0,1fr) 170px 40px}
+  .psum b{font-size:24px}
+}

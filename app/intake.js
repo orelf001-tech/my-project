@@ -7,6 +7,10 @@ import * as C from './shared/crypto.js';
 import { SECTIONS, BY_ID, normalizeAnswers, LIMITS } from './shared/template.js';
 import { buildPrefill, prefillMonth, applyAnswers, compare, insights, summaryText } from './intake-core.js';
 import { keystore } from './keystore.js';
+import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, TRACK_IDS } from './shared/portal-core.js';
+
+const BOOK_CTX = 'cf-portal-book';
+const portalBase = () => cfg.portalUrl || String(cfg.formUrl || '').replace(/form\/?$/, 'portal/');
 
 const cf = window.__cf;
 const cfg = window.CASHFLOW_CONFIG || {};
@@ -16,6 +20,7 @@ const POLL_MS = 60000;
 const BACKUP_EVERY_MS = 20 * 3600 * 1000;
 
 const st = {
+  portals: [], sendFor: null,
   phase: 'init',          // noconfig | login | mfa-enroll | mfa-verify | denied | key-create | key-unlock | ready | error
   user: null, keys: [],   // keys: [{kid, publicRaw, privateKey}] newest first
   serverKeys: [],
@@ -164,11 +169,13 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 const keyFor = kid => st.keys.find(k => k.kid === kid);
 
 async function refresh() {
-  const [links, subs] = await Promise.all([
+  const [links, subs, portals] = await Promise.all([
     q(sb.from('form_links').select('id,client_ref,kid,meta,created_at,expires_at,opened_at,last_submitted_at,revoked_at,submit_count,max_submissions').order('created_at', { ascending: false }).limit(300)),
-    q(sb.from('submissions').select('id,link_id,envelope,created_at,imported_at').order('created_at', { ascending: false }).limit(300))
+    q(sb.from('submissions').select('id,link_id,envelope,created_at,imported_at').order('created_at', { ascending: false }).limit(300)),
+    q(sb.from('portals').select('id,client_ref,key_box,book,version,updated_by,updated_at,client_seen_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(500))
   ]);
   st.links = links; st.subs = subs;
+  if (await syncPortals(portals) && !isOpen() && !typingInMain()) cf.render();
   for (const l of links) {
     if (st.linkMeta[l.id] || !l.meta) continue;
     const k = keyFor(l.meta.kid);
@@ -202,7 +209,7 @@ function linkStatus(l) {
   return ['נשלח', 'st-none'];
 }
 
-async function createLink(clientId, withPrefill, days) {
+async function createLink(clientId, withPrefill, days, silent) {
   const c = clientById(clientId); if (!c) throw new Error('client');
   const key = st.keys[0];
   const token = C.randomToken(16), hash = await C.sha256Hex(token);
@@ -216,7 +223,97 @@ async function createLink(clientId, withPrefill, days) {
   c.formLinks = (c.formLinks || []).concat({ id: row.id, url, createdAt: new Date().toISOString(), expiresAt: expires }).slice(-20);
   cf.persist();
   st.linkMeta[row.id] = { clientName: c.name, clientRef: c.id };
+  if (silent) return url;
   st.created = { url, clientName: c.name, linkId: row.id };
+  await refresh();
+  return url;
+}
+
+/* ---------- client portal: the client's own monthly report ---------- */
+const typingInMain = () => { const a = document.activeElement; return !!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.closest('#main')); };
+const localBook = c => bookFromMonths(c.months, { clientName: c.name, ...((c.portal && c.portal.meta) || {}) });
+const portalRow = c => (c && c.portal ? st.portals.find(p => p.id === c.portal.id && !p.revoked_at) : null) || null;
+
+// Write a merged book back into the coach's months, keeping coach-only fields of each row.
+function applyBook(c, book, base) {
+  const baseIds = new Set(((base && base.months) || []).map(m => m.id)), bookIds = new Set(book.months.map(m => m.id));
+  c.months = c.months.filter(m => m.locked || bookIds.has(m.id) || !baseIds.has(m.id));
+  book.months.forEach(bm => {
+    let m = c.months.find(x => x.id === bm.id);
+    if (!m) { m = cf.newMonth(bm.label); m.id = bm.id; c.months.push(m); }
+    m.label = bm.label;
+    m.income = bm.income.map(it => ({ ...((m.income || []).find(x => x.id === it.id) || {}), ...it }));
+    TRACK_IDS.forEach(id => { const old = m.cats[id] || []; m.cats[id] = bm.cats[id].map(it => ({ ...(old.find(x => x.id === it.id) || {}), ...it })); });
+  });
+  if (!c.months.length) c.months.push(cf.newMonth('חודש 1'));
+  if (!c.months.some(m => m.id === c.monthId)) c.monthId = c.months[0].id;
+}
+
+async function syncPortals(rows) {
+  st.portals = rows;
+  let applied = false, touched = false;
+  for (const row of rows) {
+    if (row.revoked_at) continue;
+    const c = clientById(row.client_ref); if (!c) continue;
+    if (!c.portal || c.portal.id !== row.id) {
+      if (c.portal && c.portal.id !== row.id && rows.some(r => r.id === c.portal.id && !r.revoked_at)) continue;
+      const k = keyFor(row.key_box && row.key_box.kid); if (!k) continue;
+      try { const box = await C.open(row.key_box, k.privateKey, k.publicRaw); c.portal = { id: row.id, url: box.url, key: box.k, base: null, version: -1, meta: {} }; touched = true; }
+      catch (_) { continue; }
+    }
+    const P = c.portal, local = localBook(c);
+    if (row.version === P.version && booksEqual(local, P.base)) continue;
+    let remote;
+    try { remote = row.version === P.version ? P.base : normalizeBook(await C.openSym(P.key, row.book, BOOK_CTX)); } catch (_) { continue; }
+    const merged = mergeBooks(P.base, local, remote, 'coach');
+    if (!booksEqual(merged, local)) {
+      if (typingInMain() && !isOpen()) continue;      // never pull the rug while she is typing; next round
+      applyBook(c, JSON.parse(JSON.stringify(merged)), P.base); applied = true;   // coach rows must not share objects with the base
+    }
+    if (!booksEqual(merged, remote)) {
+      const done = await q(sb.from('portals').update({ book: await C.sealSym(P.key, merged, BOOK_CTX), version: row.version + 1, updated_by: 'coach', updated_at: new Date().toISOString() })
+        .eq('id', row.id).eq('version', row.version).select('version'));
+      if (done.length) { P.base = merged; P.version = row.version + 1; row.version = P.version; row.updated_by = 'coach'; }
+    } else { P.base = merged; P.version = row.version; }
+    P.meta = { templateUrl: merged.templateUrl, templateDone: merged.templateDone };
+    touched = true;
+  }
+  if (touched || applied) cf.persist();
+  return applied;
+}
+
+async function createPortal(clientId, withTemplate) {
+  const c = clientById(clientId); if (!c) throw new Error('client');
+  const key = st.keys[0];
+  const token = C.randomToken(16), hash = await C.sha256Hex(token), K = C.newSymKey();
+  const url = portalBase() + '#' + new URLSearchParams({ t: token, s: K }).toString();
+  const meta = { templateUrl: withTemplate ? await createLink(c.id, true, 30, true) : '', templateDone: false };
+  const book = bookFromMonths(c.months, { clientName: c.name, ...meta });
+  const row = await q(sb.from('portals').insert({
+    client_ref: c.id, token_hash: hash, version: 0, updated_by: 'coach',
+    key_box: await C.seal(key.publicRaw, { k: K, url, clientRef: c.id, clientName: c.name }),
+    book: await C.sealSym(K, book, BOOK_CTX)
+  }).select('id').single());
+  c.portal = { id: row.id, url, key: K, base: JSON.parse(JSON.stringify(book)), version: 0, meta };
+  cf.persist();
+  st.created = { url, clientName: c.name, portal: true, withTemplate };
+  await refresh();
+}
+
+async function portalTemplate(clientId) {
+  const c = clientById(clientId); if (!c || !c.portal) return;
+  c.portal.meta = { templateUrl: await createLink(c.id, true, 30, true), templateDone: false };
+  cf.persist();
+  st.msg = 'התבנית צורפה לדוח של ' + c.name + '. היא תופיע אצלו/ה בראש הדוח החודשי.';
+  await refresh();
+}
+
+async function revokePortal(clientId) {
+  const c = clientById(clientId); if (!c || !c.portal) return;
+  await q(sb.from('portals').update({ revoked_at: new Date().toISOString() }).eq('id', c.portal.id));
+  c.portal = null; cf.persist();
+  st.msg = 'הגישה של ' + c.name + ' לדוח החודשי הופסקה. הנתונים נשארים בתיק.';
+  st.created = null;
   await refresh();
 }
 
@@ -243,6 +340,7 @@ async function importSub(subId, opts) {
   }
   const r = applyAnswers(month, d.answers, { column: opts.column, mode: opts.target === '__new' ? 'replace' : opts.mode, mkItem: cf.mkItem, uid: cf.uid });
   // Keep the client's answers in the file itself: after 30 days the server copy is deleted.
+  if (client.portal) client.portal.meta = { ...(client.portal.meta || {}), templateDone: true };
   client.forms = (client.forms || []).filter(f => f.subId !== subId).concat({ subId, receivedAt: d.submittedAt, importedAt: new Date().toISOString(), answers: d.answers, note: st.notes[subId] || '' });
   cf.persist();
   await q(sb.from('submissions').update({ imported_at: new Date().toISOString() }).eq('id', subId));
@@ -351,26 +449,41 @@ function setupCard() {
 }
 
 function sendCard() {
-  const cur = cf.cl();
+  const cur = clientById(st.sendFor) || cf.cl();
   const opts = clients().map(c => `<option value="${esc(c.id)}" ${c.id === cur.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
-  const created = st.created ? (() => {
-    const text = `שלום ${st.created.clientName.split(' ')[0]}, זה הקישור האישי שלך לטופס התזרים החודשי. הטופס מוצפן ורק אני יכולה לקרוא אותו:\n${st.created.url}`;
-    return `<div class="linkbox">
-      <p><b>הקישור של ${esc(st.created.clientName)} מוכן.</b> שולחים אותו רק ללקוח/ה.</p>
-      <input readonly class="linkurl" id="in-url" value="${esc(st.created.url)}" dir="ltr" aria-label="הקישור">
+  const row = portalRow(cur);
+  const first = cur.name.split(' ')[0];
+  const share = (url, text, title, idAttr = 'in-url') => `<input readonly class="linkurl" id="${idAttr}" value="${esc(url)}" dir="ltr" aria-label="הקישור">
       <div class="row-btns">
         <a class="btn" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener noreferrer">שליחה בוואטסאפ</a>
-        <a class="btn" href="mailto:?subject=${encodeURIComponent('טופס התזרים החודשי')}&body=${encodeURIComponent(text)}">שליחה במייל</a>
-        <button class="btn ghost" data-ia="copy" data-url="${esc(st.created.url)}">העתקה</button>
-      </div></div>`;
-  })() : '';
-  return card('שליחת טופס ללקוח', `
-    <div class="igrid">
-      <label>לקוח/ה <select id="in-client">${opts}</select></label>
-      <label>תוקף הקישור <select id="in-days"><option value="7">שבוע</option><option value="14" selected>שבועיים</option><option value="30">חודש</option></select></label>
-    </div>
-    <label class="chk"><input type="checkbox" id="in-prefill" checked> לצרף לטופס את הסעיפים מהתיק (שמות בלבד, בלי סכומים)</label>
-    <p>${btn('create', 'יצירת קישור אישי')}</p>${created}`);
+        <a class="btn" href="mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(text)}">שליחה במייל</a>
+        <button class="btn ghost" data-ia="copy" data-url="${esc(url)}">העתקה</button>
+      </div>`;
+  let body;
+  if (row && cur.portal) {
+    const meta = cur.portal.meta || {};
+    const text = `שלום ${first}, זה הקישור האישי והקבוע שלך לדוח התזרים החודשי. כדאי לשמור אותו במועדפים: בו ממלאים כל שבוע את ההוצאות, רואים את החודשים הקודמים ופותחים חודש חדש.${meta.templateUrl && !meta.templateDone ? ' בפעם הראשונה ממלאים בו את התבנית החודשית.' : ''} הדוח מוצפן, ורק את/ה ואני יכולים לקרוא אותו.\n${cur.portal.url}`;
+    const seen = row.client_seen_at ? 'נכנס/ה לאחרונה ' + dateTxt(row.client_seen_at) : 'עוד לא נכנס/ה';
+    const upd = row.updated_by === 'client' ? ' · עדכן/ה את הדוח ' + dateTxt(row.updated_at) : '';
+    body = `<div class="linkbox"><p><b>ל${esc(cur.name)} יש קישור קבוע לדוח החודשי.</b> <span class="small">${esc(seen + upd)}</span></p>
+      ${share(cur.portal.url, text, 'הדוח החודשי שלי')}
+      <p class="small">מה שהלקוח/ה ממלא/ה מתעדכן אצלך בתיק, בחודשים של מעקב חודשי (עמודת ״שולם״ והשבועות). תקציבים ושמות סעיפים שאת משנה מתעדכנים אצלו/ה.</p>
+      <div class="row-btns">${meta.templateUrl && !meta.templateDone ? '<span class="badge st-over">תבנית ראשונית ממתינה למילוי</span>' : btn('portal-tpl', 'צירוף תבנית ראשונית לדוח', `data-id="${esc(cur.id)}"`, 'btn ghost')}
+      ${st.revokePortal === cur.id ? `<button class="btn danger" data-ia="portal-revoke-yes" data-id="${esc(cur.id)}">להפסיק את הגישה?</button>` : `<button class="btn ghost" data-ia="portal-revoke" data-id="${esc(cur.id)}">הפסקת הגישה</button>`}</div></div>`;
+  } else {
+    body = `<p>הלקוח/ה מקבל/ת קישור קבוע אחד, ממנו:</p>
+      <ul class="steps"><li>ממלאים פעם אחת את <b>התבנית החודשית</b> (אם מסמנים למטה).</li><li>ממלאים כל שבוע את <b>הדוח החודשי</b>, רואים את החודשים הקודמים ופותחים חודש חדש.</li></ul>
+      <p class="small">מה שהלקוח/ה ממלא/ה מגיע מוצפן לתיק שלו/ה אצלך. הלקוח/ה לא רואה את המערכת שלך ולא לקוחות אחרים.</p>
+      <label class="chk"><input type="checkbox" id="in-tpl" ${(cur.forms || []).length ? '' : 'checked'}> לצרף את התבנית החודשית למילוי ראשון</label>
+      <p>${btn('portal-create', 'יצירת קישור אישי ללקוח/ה', `data-id="${esc(cur.id)}"`)}</p>`;
+  }
+  return card('קישור אישי ללקוח', `<div class="igrid"><label>לקוח/ה <select id="in-client">${opts}</select></label></div>${body}
+    <details class="small" id="in-tplonly" ${st.tplOpen ? 'open' : ''}><summary>שליחת תבנית בלבד, בלי דוח חודשי</summary>
+      <div class="igrid"><label>תוקף הקישור <select id="in-days"><option value="7">שבוע</option><option value="14" selected>שבועיים</option><option value="30">חודש</option></select></label></div>
+      <label class="chk"><input type="checkbox" id="in-prefill" checked> לצרף לטופס את הסעיפים מהתיק</label>
+      <p>${btn('create', 'יצירת קישור לתבנית בלבד')}</p>
+      ${st.created && !st.created.portal ? share(st.created.url, `שלום ${st.created.clientName.split(' ')[0]}, זה הקישור האישי שלך לתבנית התזרים החודשית. הטופס מוצפן ורק אני יכולה לקרוא אותו:\n${st.created.url}`, 'התבנית החודשית', 'in-url-tpl') : ''}
+    </details>`);
 }
 
 function inboxCard() {
@@ -516,10 +629,12 @@ document.addEventListener('change', async e => {
     } catch (_) { st.err = 'זה לא קובץ שחזור תקין.'; }
     return rerender();
   }
+  if (t.id === 'in-client') { st.sendFor = t.value; st.created = null; rerender(); return; }
   if (t.id === 'in-tclient') { st.pickClient = t.value; st.pickMonth = null; rerender(); }
   if (t.id === 'in-tmonth') { st.pickMonth = t.value; }
 });
 
+document.addEventListener('toggle', e => { if (e.target.id === 'in-tplonly') st.tplOpen = e.target.open; }, true);
 document.addEventListener('input', e => { if (e.target.id === 'in-note') { st.notes[e.target.dataset.isub] = e.target.value; } });
 
 document.addEventListener('click', e => {
@@ -529,6 +644,10 @@ document.addEventListener('click', e => {
     case 'dismiss': st.msg = ''; st.err = ''; rerender(); break;
     case 'retry': st.phase = 'init'; st.err = ''; rerender(); advance(); break;
     case 'signout': busy('signout', async () => { stopPoll(); await sb.auth.signOut(); st.phase = 'login'; st.user = null; st.keys = []; st.dec = {}; st.linkMeta = {}; }); break;
+    case 'portal-create': busy('portal-create', () => createPortal(id, document.getElementById('in-tpl').checked)); break;
+    case 'portal-tpl': busy('portal-tpl', () => portalTemplate(id)); break;
+    case 'portal-revoke': st.revokePortal = id; rerender(); break;
+    case 'portal-revoke-yes': st.revokePortal = null; busy('portal-revoke', () => revokePortal(id)); break;
     case 'create': {
       const cid = document.getElementById('in-client').value, days = +document.getElementById('in-days').value, pre = document.getElementById('in-prefill').checked;
       busy('create', () => createLink(cid, pre, days)); break;

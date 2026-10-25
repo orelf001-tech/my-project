@@ -114,7 +114,7 @@ function monthNav() {
   const cur = curMonth();
   return `<nav class="months" aria-label="חודשים">${P.local.months.map(m => `<button class="chip ${cur && m.id === cur.id ? 'on' : ''}" data-act="month" data-id="${esc(m.id)}" ${cur && m.id === cur.id ? 'aria-current="page"' : ''}>${esc(m.label || 'חודש')}</button>`).join('')}
     ${P.confirmNew ? `<span class="newm">לפתוח את ״${esc(nextMonthLabel(P.local))}״? <button class="btn primary sm" data-act="newmonth-yes">כן, לפתוח</button><button class="btn ghost sm" data-act="newmonth-no">ביטול</button></span>`
-      : '<button class="chip add" data-act="newmonth">+ חודש חדש</button>'}</nav>`;
+      : '<button class="chip addm" data-act="newmonth">+ חודש חדש</button>'}</nav>`;
 }
 
 function rowsHtml(m, s) {

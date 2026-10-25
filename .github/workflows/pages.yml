@@ -28,7 +28,7 @@ jobs:
       - name: Assemble site (only what the browser needs)
         run: |
           mkdir _site
-          cp -R index.html .nojekyll form shared assets app _site/
+          cp -R index.html .nojekyll form portal shared assets app _site/
           # the coach app loads shared modules and assets relative to itself
           cp -R shared assets _site/app/
       - uses: actions/configure-pages@v5
