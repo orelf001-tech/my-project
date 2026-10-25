@@ -1,0 +1,21 @@
+.need{margin:0 0 10px;padding-inline-start:22px}
+.need li{margin:6px 0}
+.how{margin:0 0 10px;background:var(--field);border:1px solid var(--line);border-radius:12px;padding:8px 14px}
+.how summary{cursor:pointer;font-weight:700;color:var(--teal)}
+.how p{margin:8px 0;font-size:15px}
+.cnt{font-size:14px;font-weight:600;color:var(--muted);margin-inline-start:8px}
+.card h2{margin:0}
+.cardblk{padding:6px 16px 14px;border-top:1px solid var(--line)}
+.cardblk .field{margin:10px 0}
+.cardblk .field span{font-weight:600;font-size:15px}
+.slot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.slot:last-of-type{border-bottom:0}
+.slot .sl{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.slot .sl small{display:block;color:var(--muted);font-size:13px}
+.slot .sl small.fn{color:var(--good-fg)}
+.slot .ic{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:2px solid var(--line);color:var(--muted);flex:none;font-weight:700}
+.slot.ok .ic{border-color:var(--good-fg);background:var(--good-bg);color:var(--good-fg)}
+.slot label.btn{position:relative;overflow:hidden;white-space:nowrap;display:inline-flex;align-items:center;flex:none}
+.slot label.btn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.slot label.btn.dis{opacity:.6}
+@media (min-width:900px){.wrap{max-width:820px}}
