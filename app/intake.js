@@ -287,7 +287,22 @@ function msgs() {
 const card = (title, body, cls = '') => `<section class="card ${cls}" style="margin-bottom:14px"><h2>${title}</h2><div class="pad">${body}</div></section>`;
 const btn = (ia, label, extra = '', cls = 'btn') => `<button class="${cls}" data-ia="${ia}" ${extra} ${st.busy ? 'disabled' : ''}>${st.busy && st.busy === ia ? 'רגע…' : label}</button>`;
 
+// First-time setup is three steps; show where she is and what unlocks at the end.
+const SETUP_STEPS = [['login', 'כניסה'], ['mfa', 'אימות דו־שלבי'], ['key', 'מפתח הצפנה']];
+function stepper() {
+  const at = { login: 0, 'mfa-enroll': 1, 'mfa-verify': 1, 'key-create': 2, 'key-unlock': 2 }[st.phase];
+  if (at === undefined) return '';
+  return `<div class="card" style="margin-bottom:14px"><div class="pad">
+    <ol class="isteps">${SETUP_STEPS.map(([, l], i) => `<li class="${i < at ? 'done' : i === at ? 'cur' : ''}">${i < at ? '✓' : i + 1}. ${l}</li>`).join('')}<li>✉ שליחת טפסים ללקוחות</li></ol>
+    <p class="small" style="margin:8px 0 0">אחרי השלבים האלה יופיעו כאן: <b>שליחת טופס ללקוח</b> (יצירת קישור אישי ושליחה בוואטסאפ), <b>טפסים שהתקבלו</b>, <b>קישורים שנשלחו</b> ו<b>גיבוי</b>.${st.phase === 'login' || st.phase === 'mfa-verify' || st.phase === 'key-unlock' ? ' בכניסות הבאות מספיקים סיסמה וקוד מהאפליקציה.' : ''}</p>
+  </div></div>`;
+}
+
 function setupView() {
+  return stepper() + setupCard();
+}
+
+function setupCard() {
   switch (st.phase) {
     case 'init': return card('שאלונים', '<p class="note-s">מתחבר…</p>');
     case 'error': return card('שאלונים', `<p>לא הצלחתי להתחבר לשרת.</p>${btn('retry', 'לנסות שוב')}`);
