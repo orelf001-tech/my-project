@@ -12,13 +12,14 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const app = document.getElementById('app');
 const cfg = window.CASHFLOW_CONFIG || {};
 
-// The last three FULL months, oldest first.
-function lastMonths(now = new Date()) {
+// The bank: the last three FULL months, oldest first. Cards: those three plus the current month's statement,
+// because a statement is charged around the 10th: "פירוט אוקטובר" holds the purchases of the bank's last month.
+function lastMonths(now = new Date(), upto = 1) {
   const out = [];
-  for (let i = 3; i >= 1; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: HEB_MONTHS[d.getMonth()] + ' ' + d.getFullYear() }); }
+  for (let i = 3; i >= upto; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: HEB_MONTHS[d.getMonth()] + ' ' + d.getFullYear() }); }
   return out;
 }
-const MONTHS = lastMonths();
+const MONTHS = lastMonths(), CARD_MONTHS = lastMonths(new Date(), 0);
 const range = `${MONTHS[0].label} – ${MONTHS[2].label}`;
 
 const U = { token: '', pub: '', storeKey: '', cards: [{ id: 'c1', name: '' }], files: [], busy: '', err: '', done: false };
@@ -74,7 +75,7 @@ function render() {
       <p><button class="btn ghost" data-act="more">שכחתי משהו, להעלות עוד קובץ</button></p></section>`;
     return;
   }
-  const cardsTotal = U.cards.length * 3, cardsDone = U.cards.reduce((a, c) => a + MONTHS.filter(m => filesIn(cardSlot(c, m)).length).length, 0);
+  const cardsTotal = U.cards.length * CARD_MONTHS.length, cardsDone = U.cards.reduce((a, c) => a + CARD_MONTHS.filter(m => filesIn(cardSlot(c, m)).length).length, 0);
   const bankDone = filesIn('bank').length > 0;
   app.innerHTML = `
   <section class="card pad">
@@ -82,11 +83,11 @@ function render() {
     <p>כדי שנוכל לנתח את התזרים לפני הפגישה, מעלים כאן שני סוגי קבצים:</p>
     <ol class="need">
       <li><b>פירוט חשבון העו״ש:</b> ${esc(range)}, בקובץ Excel.</li>
-      <li><b>פירוט כרטיסי אשראי:</b> מאותם חודשים, ${esc(MONTHS.map(m => '״פירוט ' + m.label.split(' ')[0] + '״').join(', '))}, בדיוק בשמות שמופיעים באתר של חברת האשראי. <b>קובץ Excel לכל חודש בנפרד.</b> יש כמה כרטיסים? מעלים כל כרטיס בנפרד.</li>
+      <li><b>פירוט כרטיסי אשראי:</b> 4 פירוטים, ${esc(CARD_MONTHS.map(m => '״פירוט ' + m.label.split(' ')[0] + '״').join(', '))}, בדיוק בשמות שמופיעים באתר של חברת האשראי. <b>קובץ Excel לכל חודש בנפרד.</b> יש כמה כרטיסים? מעלים כל כרטיס בנפרד.</li>
     </ol>
     <details class="how"><summary>איך מורידים קובץ Excel?</summary>
-      <p><b>כרטיס אשראי:</b> באתר או באפליקציה של חברת האשראי (ישראכרט, כאל, מקס, אמריקן אקספרס, דיינרס): פירוט חיובים ← בוחרים את החודש בשם שמופיע כאן (למשל ״פירוט ${esc(MONTHS[2].label.split(' ')[0])}״) ← ״ייצוא ל־Excel״ או ״הורדה״. חוזרים על זה לכל חודש ולכל כרטיס.</p>
-      <p class="unit">שימו לב: בפירוט של חודש מסוים רוב הקניות הן מהחודש שלפניו, כי החיוב יורד מהבנק בחודש שאחרי הקנייה. זה בסדר וזה מה שצריך: כך כל פירוט מתאים לחיוב שירד מהעו״ש באותו חודש.</p>
+      <p><b>כרטיס אשראי:</b> באתר או באפליקציה של חברת האשראי (ישראכרט, כאל, מקס, אמריקן אקספרס, דיינרס): פירוט חיובים ← בוחרים את החודש בשם שמופיע כאן (למשל ״פירוט ${esc(CARD_MONTHS[3].label.split(' ')[0])}״) ← ״ייצוא ל־Excel״ או ״הורדה״. חוזרים על זה לכל חודש ולכל כרטיס.</p>
+      <p class="unit">שימו לב: בפירוט של חודש מסוים רוב הקניות הן מהחודש שלפניו, כי החיוב יורד מהבנק בחודש שאחרי הקנייה. זה בסדר וזה מה שצריך: כך כל פירוט מתאים לחיוב שירד מהעו״ש באותו חודש, והפירוט האחרון (״פירוט ${esc(CARD_MONTHS[3].label.split(' ')[0])}״) משלים את הקניות של ${esc(MONTHS[2].label.split(' ')[0])}.</p>
       <p><b>עו״ש:</b> באתר הבנק: חשבון עו״ש ← תנועות בחשבון ← בוחרים תקופה של 3 חודשים ← ״ייצוא ל־Excel״.</p>
       <p>מהטלפון זה לפעמים מסובך. באתר במחשב זה בדרך כלל פשוט יותר.</p>
     </details>
@@ -98,8 +99,8 @@ function render() {
     ${U.cards.map((c, i) => `<div class="cardblk">
       <label class="field"><span>כרטיס ${i + 1}: שם החברה ו־4 הספרות האחרונות</span>
         <input class="txt" data-card="${esc(c.id)}" value="${esc(c.name)}" placeholder="למשל: ויזה כאל 1234" maxlength="40"></label>
-      ${MONTHS.map(m => slotHtml(cardSlot(c, m), 'פירוט ' + m.label, '')).join('')}
-      ${U.cards.length > 1 && !MONTHS.some(m => filesIn(cardSlot(c, m)).length) ? `<button class="link" data-act="delcard" data-id="${esc(c.id)}">הסרת הכרטיס</button>` : ''}
+      ${CARD_MONTHS.map(m => slotHtml(cardSlot(c, m), 'פירוט ' + m.label, '')).join('')}
+      ${U.cards.length > 1 && !CARD_MONTHS.some(m => filesIn(cardSlot(c, m)).length) ? `<button class="link" data-act="delcard" data-id="${esc(c.id)}">הסרת הכרטיס</button>` : ''}
     </div>`).join('')}
     <button class="add" data-act="addcard">+ יש לי עוד כרטיס</button>
   </section>
@@ -124,7 +125,7 @@ async function upload(slot, file) {
   if (file.size > MAX_BYTES) { U.err = `הקובץ ״${file.name}״ גדול מדי (עד 3MB).`; return; }
   const [kind, cardId, month] = slot.split(':');
   const card = kind === 'card' ? U.cards.find(c => c.id === cardId) : null;
-  const monthLabel = month ? (MONTHS.find(m => m.key === month) || {}).label : '';
+  const monthLabel = month ? (CARD_MONTHS.find(m => m.key === month) || {}).label : '';
   const label = kind === 'card' ? `${(card && card.name.trim()) || 'כרטיס אשראי'} – ${monthLabel}` : `עו״ש – ${file.name.replace(/\.[^.]+$/, '')}`;
   const data = b64uEncode(new Uint8Array(await file.arrayBuffer()));
   const env = await seal(U.pub, { type: 'statement', kind: kind === 'card' ? 'card' : 'bank', card: card ? card.name.trim() : '', month: month || '', label, fileName: file.name, mime: file.type || '', size: file.size, data, uploadedAt: new Date().toISOString() });
