@@ -225,14 +225,14 @@ function readTables(buf, name){
   return [{name:'קובץ', rows:parseDelimited(decodeText(buf))}];
 }
 const HP = {
-  cdate:[/תאריך\s*חיוב/, /חיוב\s*ל?תאריך/], vdate:[/תאריך\s*ערך/],
+  cdate:[/תאריך\s*ה?חיוב/, /חיוב\s*ל?תאריך/], vdate:[/תאריך\s*ערך/],
   date:[/תאריך\s*(עסקה|רכישה|פעולה|התחייבות)/, /^תאריך$/],
   desc:[/שם\s*בית\s*ה?עסק/, /בית\s*ה?עסק/, /שם\s*(ה)?עסק/, /^תיאור/, /תיאור\s*הפעולה/, /^תאור/, /סוג\s*תנועה/, /^תנועה$/, /^ה?פעולה$/, /^פרטים$/],
-  amt:[/סכום\s*חיוב/, /סכום\s*בש/, /סכום\s*עסקה/, /^סכום$/, /זכות\s*\/\s*חובה|חובה\s*\/\s*זכות/],
+  amt:[/סכום\s*ה?חיוב/, /סכום\s*בש/, /סכום\s*ה?עסקה/, /^סכום$/, /זכות\s*\/\s*חובה|חובה\s*\/\s*זכות/],
   debit:[/^חובה$/, /בחובה/], credit:[/^זכות$/, /בזכות/],
-  extra:[/סוג\s*עסק/], ex2:[/פירוט\s*נוסף/, /^פירוט$/, /הערות/], ic:[/^קטגוריה$/, /^ענף$/],
-  card:[/^שם\s*כרטיס$/, /ספרות\s*אחרונות/, /^מספר\s*כרטיס$/], ref:[/^אסמכתא$/],
-  det:[/^פרטים$/], to:[/^לטובת$/], forr:[/^עבור$/], cur:[/מטבע\s*(עסקה\s*)?מקורי/, /^מטבע\s*עסקה$/, /^מטבע$/], pa:[/^סכום\s*קנייה$/, /^סכום\s*רכישה$/, /^סכום\s*עסקה$/]
+  extra:[/סוג\s*ה?עסק/], ex2:[/פירוט\s*נוסף/, /^פירוט$/, /הערות/], ic:[/^קטגוריה$/, /^ענף$/],
+  card:[/^שם\s*כרטיס$/, /^כרטיס$/, /ספרות\s*אחרונות/, /^מספר\s*כרטיס$/], ref:[/^אסמכתא$/],
+  det:[/^פרטים$/], to:[/^לטובת$/], forr:[/^עבור$/], cur:[/מטבע\s*(עסקה\s*)?מקורי/, /^מטבע\s*ה?עסקה$/, /^מטבע$/], pa:[/^סכום\s*קנייה$/, /^סכום\s*רכישה$/, /^סכום\s*ה?עסקה$/]
 };
 const hnorm = v => String(v == null ? '' : v).replace(/["'׳״\u200e\u200f]/g, '').replace(/\s+/g, ' ').trim();
 function mapRow(row){
@@ -393,8 +393,9 @@ function buildTx(raw, src, type){
   const m = (raw.desc + ' ' + raw.ex).match(/תשלום\s*(\d+)\s*(?:מתוך|\/)\s*(\d+)/);
   if (m && +m[2] > 1) inst = true; else if (/תשלומים/.test(raw.ex) && !/הוראת קבע/.test(raw.ex)) inst = true;
   const key = mkey(raw.desc, type);
-  return {id:uid(), src, type, date:raw.date, cd:raw.cd, desc:raw.desc, amt:raw.amt, kind:raw.kind, ex:raw.ex.slice(0, 60), ic:raw.ic.slice(0, 30), key, rk:raw.kind + '|' + key, card:raw.card || '', pa:raw.pa || 0, fx:!!raw.fx,
-          settle: type === 'bank' && raw.kind === 'exp' && SETTLE_RE.test(raw.desc), inst, ac:'uns', man:false, cat:null, x:null};
+  const settle = type === 'bank' && raw.kind === 'exp' && SETTLE_RE.test(raw.desc), named = settle && raw.desc.match(/(?:^|\D)(\d{4})(?:\D|$)/);
+  return {id:uid(), src, type, date:raw.date, cd:raw.cd, desc:raw.desc, amt:raw.amt, kind:raw.kind, ex:raw.ex.slice(0, 60), ic:raw.ic.slice(0, 30), key, rk:raw.kind + '|' + key, card:raw.card || (named ? named[1] : ''), pa:raw.pa || 0, fx:!!raw.fx,
+          settle, inst, ac:'uns', man:false, cat:null, x:null};
 }
 /* cross-check of credit-card settlements in the bank account against card statements */
 let crossRes = {matched:[], unmatched:[], near:[], covered:[], groups:[], cardUnmatched:[], covGaps:[]};
@@ -410,21 +411,28 @@ function crossCheck(rep){
   const sameCard = (g, s) => !g.card || !s.card || !cardIds.has(s.card) || g.card === s.card;
   const near12 = (g, s) => !g.cd || dd(g.cd, s.date) <= 12;
   const anyCd = cards.some(t => t.cd), cDates = cards.map(t => t.date).sort();
-  const covered = s => anyCd ? cards.some(t => t.cd && dd(t.cd, s.date) <= 12 && (!t.card || !s.card || !cardIds.has(s.card) || t.card === s.card))
+  const covered = s => anyCd ? gl.some(g => !g.matched && g.cd && dd(g.cd, s.date) <= 12 && sameCard(g, s))
                              : (cDates.length && s.date >= cDates[0] && dd(s.date, cDates[cDates.length - 1]) <= 45 || (cDates.length && s.date >= cDates[cDates.length - 1] && dd(s.date, cDates[cDates.length - 1]) <= 45));
   const res = {matched:[], unmatched:[], near:[], covered:[], groups:gl, cardUnmatched:[], covGaps:[]};
+  // Exact matches first for every charge, so a nearby charge never takes another one's statement as a "near" match.
+  const open = new Set(settles);
   for (const s of settles) {
     let best = null;
     for (const g of gl) { if (g.matched || Math.abs(g.sum - s.amt) > 1.01 || !sameCard(g, s) || !near12(g, s)) continue; const dist = g.cd ? dd(g.cd, s.date) : 0; if (!best || dist < best.dist) best = {g, dist}; }
-    if (best) { best.g.matched = true; s.x = best.g.k; res.matched.push({s, g:best.g}); continue; }
+    if (best) { best.g.matched = true; s.x = best.g.k; res.matched.push({s, g:best.g}); open.delete(s); }
+  }
+  for (const s of [...open]) {
     let pair = null;
     for (let i = 0; i < gl.length && !pair; i++) { if (gl[i].matched) continue; for (let j = i + 1; j < gl.length; j++) { if (gl[j].matched) continue; if (Math.abs(gl[i].sum + gl[j].sum - s.amt) <= 1.01 && [gl[i], gl[j]].every(g => sameCard(g, s) && near12(g, s))) { pair = [gl[i], gl[j]]; break; } } }
-    if (pair) { pair.forEach(g => { g.matched = true; }); s.x = pair.map(g => g.k).join('+'); res.matched.push({s, g:pair[0]}); continue; }
-    const near = gl.filter(g => !g.matched && sameCard(g, s) && near12(g, s)).map(g => ({g, diff:r2(s.amt - g.sum)})).filter(x => Math.abs(x.diff) > 1.01 && Math.abs(x.diff) <= Math.max(300, s.amt * 0.06)).sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))[0];
-    if (near) { near.g.matched = true; s.x = near.g.k; s.gap = near.diff; res.near.push({s, g:near.g, diff:near.diff}); continue; }
-    if (covered(s)) { s.x = 'covered'; res.covered.push(s); continue; }
-    res.unmatched.push(s);
+    if (pair) { pair.forEach(g => { g.matched = true; }); s.x = pair.map(g => g.k).join('+'); res.matched.push({s, g:pair[0]}); open.delete(s); }
   }
+  for (const s of [...open]) {
+    const near = gl.filter(g => !g.matched && sameCard(g, s) && near12(g, s)).map(g => ({g, diff:r2(s.amt - g.sum)})).filter(x => Math.abs(x.diff) > 1.01 && Math.abs(x.diff) <= Math.max(300, s.amt * 0.06)).sort((a, b) => Math.abs(a.diff) - Math.abs(b.diff))[0];
+    if (near) { near.g.matched = true; s.x = near.g.k; s.gap = near.diff; res.near.push({s, g:near.g, diff:near.diff}); open.delete(s); }
+  }
+  // "covered": no statement matches by amount, but card details of that period are still unaccounted for
+  for (const s of open) { if (covered(s)) { s.x = 'covered'; res.covered.push(s); } else res.unmatched.push(s); }
+  res.matched.sort((a, b) => a.s.date < b.s.date ? -1 : 1);
   res.cardUnmatched = gl.filter(g => !g.matched);
   // Charges "covered" by a statement of the same period are only skipped as far as the card details account
   // for them: per month, whatever the bank charged beyond the unmatched card details stays in the report.
@@ -449,14 +457,16 @@ function recomputeAll(){
   rep.tx.forEach(t => { t.ac = autoCat(t, rep.rules); });
   crossCheck(rep);
 }
+// the same installment (same purchase date, shop and amount) appears in every month's statement with its own charge date
+const txKey = (t, type) => [t.date, t.desc, t.amt, t.kind, type].join('|') + (t.cd ? '|' + t.cd : '');
 function importRaw(rawList, type, name, fileName){
   const rep = cl().rep;
   const src = {id:uid(), name:name, type, file:fileName || '', n:0, total:0, from:null, to:null};
-  const have = {}; rep.tx.forEach(t => { const k = [t.date, t.desc, t.amt, t.kind, t.type].join('|'); have[k] = (have[k] || 0) + 1; });
+  const have = {}; rep.tx.forEach(t => { if (t.virt) return; const k = txKey(t, t.type); have[k] = (have[k] || 0) + 1; });
   Object.keys(rep.del || {}).forEach(k => { have[k] = (have[k] || 0) + rep.del[k]; });
   const seen = {}; let dupes = 0; const add = [];
   rawList.forEach(raw => {
-    const k = [raw.date, raw.desc, raw.amt, raw.kind, type].join('|'); seen[k] = (seen[k] || 0) + 1;
+    const k = txKey(raw, type); seen[k] = (seen[k] || 0) + 1;
     if (seen[k] <= (have[k] || 0)) { dupes++; return; }
     add.push(buildTx(raw, src.id, type));
   });
@@ -485,7 +495,7 @@ function markOnce(id, on){
 }
 function deleteTx(id){
   const rep = cl().rep, t = rep.tx.find(x => x.id === id); if (!t || t.virt) return;
-  const k = [t.date, t.desc, t.amt, t.kind, t.type].join('|'); rep.del = rep.del || {}; rep.del[k] = (rep.del[k] || 0) + 1;
+  const k = txKey(t, t.type); rep.del = rep.del || {}; rep.del[k] = (rep.del[k] || 0) + 1;
   rep.tx = rep.tx.filter(x => x.id !== id); recomputeAll(); persist();
 }
 function deleteSource(id){ const rep = cl().rep; rep.sources = rep.sources.filter(s => s.id !== id); rep.tx = rep.tx.filter(t => t.src !== id); recomputeAll(); persist(); }
@@ -1237,10 +1247,10 @@ async function autoImportFile(file){
   const name = nameOf();
   // Card exports often split one statement over several sheets (e.g. domestic and abroad).
   // Read every sheet that has a transaction table, so the total matches the bank charge.
-  // A sheet of another billing cycle (future / not yet charged) belongs to the next statement: only rows
-  // whose charge date is one of the main sheet's charge dates are taken from the other sheets.
+  // A sheet of the next billing cycle (future / not yet charged) belongs to the next statement: other sheets
+  // add only rows charged up to this statement's charge date (e.g. Max "עסקאות בחיוב מיידי").
   const mainRows = normalizeTable(tables[best.i], det.hdr, det.map, type, 'neg', true);
-  const mainCd = new Set(mainRows.map(x => x.cd).filter(Boolean));
+  const maxCd = mainRows.map(x => x.cd).filter(Boolean).sort().pop() || '';
   const seenSheets = new Set();
   let raw = [];
   [best.i].concat(tables.map((t, i) => i).filter(i => i !== best.i)).forEach(i => {
@@ -1249,11 +1259,11 @@ async function autoImportFile(file){
     let rows = i === best.i ? mainRows : normalizeTable(t, d.hdr, d.map, type, 'neg', true);
     if (i !== best.i && type === 'card') {
       if (/עתיד|טרם|ממתינ|נדח/.test(t.name || '')) return;
-      if (mainCd.size && rows.some(x => x.cd)) rows = rows.filter(x => mainCd.has(x.cd));
+      if (maxCd && rows.some(x => x.cd)) rows = rows.filter(x => x.cd && x.cd <= maxCd);
     }
     // a later sheet that repeats rows of an earlier one (an "all transactions" view) must not count twice
-    const prev = {}; raw.forEach(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); prev[k] = (prev[k] || 0) + 1; });
-    raw = raw.concat(rows.filter(x => { const k = [x.date, x.desc, x.amt, x.kind].join('|'); if (prev[k]) { prev[k]--; return false; } return true; }));
+    const prev = {}; raw.forEach(x => { const k = txKey(x, type); prev[k] = (prev[k] || 0) + 1; });
+    raw = raw.concat(rows.filter(x => { const k = txKey(x, type); if (prev[k]) { prev[k]--; return false; } return true; }));
   });
   if (!raw.length) { if (noTx()) { const r = importRaw([], type, name, file.name); r.src.empty = true; persist(); return {ok:true, added:0, dupes:0, type, name, empty:true}; } return {ok:false, tables, file:file.name}; }
   const r = importRaw(raw, type, name, file.name);
