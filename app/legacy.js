@@ -397,7 +397,7 @@ function buildTx(raw, src, type){
           settle: type === 'bank' && raw.kind === 'exp' && SETTLE_RE.test(raw.desc), inst, ac:'uns', man:false, cat:null, x:null};
 }
 /* cross-check of credit-card settlements in the bank account against card statements */
-let crossRes = {matched:[], unmatched:[], near:[], covered:[], groups:[], cardUnmatched:[]};
+let crossRes = {matched:[], unmatched:[], near:[], covered:[], groups:[], cardUnmatched:[], covGaps:[]};
 function crossCheck(rep){
   const oldGap = {}; rep.tx.forEach(t => { if (t.virt && t.man) oldGap[t.id] = t.cat; });
   rep.tx = rep.tx.filter(t => !t.virt);
@@ -412,7 +412,7 @@ function crossCheck(rep){
   const anyCd = cards.some(t => t.cd), cDates = cards.map(t => t.date).sort();
   const covered = s => anyCd ? cards.some(t => t.cd && dd(t.cd, s.date) <= 12 && (!t.card || !s.card || !cardIds.has(s.card) || t.card === s.card))
                              : (cDates.length && s.date >= cDates[0] && dd(s.date, cDates[cDates.length - 1]) <= 45 || (cDates.length && s.date >= cDates[cDates.length - 1] && dd(s.date, cDates[cDates.length - 1]) <= 45));
-  const res = {matched:[], unmatched:[], near:[], covered:[], groups:gl, cardUnmatched:[]};
+  const res = {matched:[], unmatched:[], near:[], covered:[], groups:gl, cardUnmatched:[], covGaps:[]};
   for (const s of settles) {
     let best = null;
     for (const g of gl) { if (g.matched || Math.abs(g.sum - s.amt) > 1.01 || !sameCard(g, s) || !near12(g, s)) continue; const dist = g.cd ? dd(g.cd, s.date) : 0; if (!best || dist < best.dist) best = {g, dist}; }
@@ -426,6 +426,18 @@ function crossCheck(rep){
     res.unmatched.push(s);
   }
   res.cardUnmatched = gl.filter(g => !g.matched);
+  // Charges "covered" by a statement of the same period are only skipped as far as the card details account
+  // for them: per month, whatever the bank charged beyond the unmatched card details stays in the report.
+  const buckets = {};
+  res.covered.forEach(s => { const b = buckets[s.date.slice(0, 7)] || (buckets[s.date.slice(0, 7)] = {mk:s.date.slice(0, 7), bank:0, card:0, s:[]}); b.bank += s.amt; b.s.push(s); });
+  res.cardUnmatched.forEach(g => {
+    let best = null;
+    res.covered.forEach(s => { if (!sameCard(g, s)) return; const dist = g.cd ? dd(g.cd, s.date) : 0; if (g.cd && dist > 12) return; if (!best || dist < best.dist) best = {s, dist}; });
+    if (best) buckets[best.s.date.slice(0, 7)].card += g.sum;
+  });
+  res.covGaps = Object.values(buckets).map(b => ({mk:b.mk, bank:r2(b.bank), card:r2(b.card), gap:r2(b.bank - b.card), s:b.s})).filter(b => b.gap > 1.01).sort((a, b) => a.mk < b.mk ? -1 : 1);
+  res.covGaps.forEach(b => { const id = 'cov' + b.mk, cat = oldGap[id], last = b.s[b.s.length - 1];
+    rep.tx.push({id, virt:true, src:last.src, type:'bank', date:last.date, cd:'', desc:'פער הצלבה: חיובי אשראי ' + b.mk.split('-').reverse().join('/') + ' ללא פירוט מלא', amt:b.gap, kind:'exp', ex:'', ic:'', key:'', rk:'gap|' + id, card:'', pa:0, fx:false, settle:false, inst:false, ac:'uns', man:cat != null, cat:cat == null ? null : cat, x:null}); });
   // the gap between a bank charge and its card statement is real money: it stays in the report as its own row
   res.near.forEach(({s, diff}) => { const id = s.id + 'g', cat = oldGap[id];
     rep.tx.push({id, virt:true, src:s.src, type:'bank', date:s.date, cd:'', desc:'פער הצלבה: ' + s.desc, amt:Math.abs(diff), kind:diff > 0 ? 'exp' : 'inc', ex:'', ic:'', key:'', rk:'gap|' + id, card:'', pa:0, fx:false, settle:false, inst:false, ac:'uns', man:cat != null, cat:cat == null ? null : cat, x:null}); });
@@ -732,7 +744,7 @@ function fixView(){
   return `<section>
     <p class="lead">שלב שני: ההצלבה בין התדפיסים והשיוך של שורות החיוב לקטגוריות. מה שלא זוהה נשאר ב״ללא שיוך״, ואפשר לשייך אותו כאן בלחיצה אחת לכל בית עסק.</p>
     <div class="cards4">
-      <div class="stat"><small>חיובי אשראי שהוצלבו</small><b class="num">${cx.matched.length + cx.near.length + (cx.covered || []).length}</b><em>החיובים בעו״ש לא נספרים, כי הפירוט שלהם מופיע בתדפיס האשראי. אין כפילויות.</em></div>
+      <div class="stat"><small>חיובי אשראי שהוצלבו</small><b class="num">${cx.matched.length + cx.near.length + (cx.covered || []).length}</b><em>החיוב בעו״ש לא נספר פעמיים: במקומו נספרות העסקאות מהתדפיס. מה שלא מוסבר בתדפיס נשאר בדוח כ״פער הצלבה״.</em></div>
       <div class="stat"><small>חיובי אשראי בעו״ש ללא פירוט</small><b class="num" style="color:${cx.unmatched.length ? 'var(--bad-fg)' : 'inherit'}">${cx.unmatched.length}</b><em>${cx.unmatched.length ? fmt0(missingSum) + ' שאין להם תדפיס תואם' : (haveBank ? 'הכול הוצלב' : 'לא נטען עו״ש')}</em></div>
       <div class="stat"><small>עדיין ללא שיוך</small><b class="num">${unsList.length}</b><em>${fmt0(unsSum)} הוצאות${expAll ? ' · ' + pct(unsSum / expAll) + ' מההוצאות' : ''}${unsCred.length ? ` · ${unsCred.length} זיכויים (${fmt0(unsCredSum)}) שלא נספרו כהכנסה` : ''}</em></div>
       <div class="stat"><small>תנועות כפולות שדולגו</small><b class="num">${rep.dupes || 0}</b><em>מקבצים שחופפים בתקופה</em></div>
@@ -740,8 +752,8 @@ function fixView(){
     ${!haveBank ? `<div class="warn-box">לא נטען תדפיס עו״ש, ולכן אין נתוני הכנסות ולא בוצעה הצלבה מול הבנק. <button class="btn" data-act="go" data-v="load">לטעינת עו״ש</button></div>` : ''}
     ${haveBank && !haveCard && cx.unmatched.length ? `<div class="warn-box">בעו״ש יש חיובי כרטיס אשראי, אבל לא נטענו תדפיסי אשראי. החיובים נשארים ללא שיוך עד שיטענו. <button class="btn" data-act="go" data-v="load">לטעינת אשראי</button></div>` : ''}
     ${cx.unmatched.length && haveCard ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>בעו״ש יש ${cx.unmatched.length} חיובי אשראי, בין ${esc(dFmt(unDates[0]))} ל-${esc(dFmt(unDates[unDates.length - 1]))}, בסך ${fmt0(missingSum)}, שאין להם פירוט בתדפיסי האשראי שנטענו.</b><span>כנראה חסר תדפיס אשראי לתקופה הזו. עד שייטען, החיובים נשארים ב״ללא שיוך״ ונספרים כהוצאה.</span><ul style="margin:0;padding-inline-start:20px">${miss}</ul></div>` : ''}
-    ${cx.near.length ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>חיובי אשראי בעו״ש שהותאמו לתדפיס עם הפרש קטן (לא נספרים, כי הפירוט מופיע בתדפיס):</b><ul style="margin:0;padding-inline-start:20px">${nearRows}</ul></div>` : ''}
-    ${(cx.covered || []).length ? `<div class="ok-box">${cx.covered.length} חיובי אשראי נוספים בעו״ש (${fmt0(covSum)}) לא נספרו, כי יש תדפיס אשראי לאותה תקופה והפירוט כבר בדוח. אפשר לראות אותם בקטגוריה ״לא נספר״. <button class="btn ghost" data-act="drill" data-cat="skip">הצגה</button></div>` : ''}
+    ${cx.near.length ? `<div class="warn-box" style="align-items:flex-start;flex-direction:column"><b>חיובי אשראי בעו״ש שהותאמו לתדפיס עם הפרש. העסקאות מהתדפיס נספרות, וההפרש נשאר בדוח כשורת ״פער הצלבה״ ב״ללא שיוך״:</b><ul style="margin:0;padding-inline-start:20px">${nearRows}</ul></div>` : ''}
+    ${(cx.covered || []).length ? `<div class="${(cx.covGaps || []).length ? 'warn-box' : 'ok-box'}">${cx.covered.length} חיובי אשראי נוספים בעו״ש (${fmt0(covSum)}) לא הותאמו לפירוט מסוים, אבל יש תדפיס אשראי לאותה תקופה, והעסקאות שלו כבר בדוח.${(cx.covGaps || []).length ? ` <b>חלק מהסכום לא מוסבר בתדפיסים: ${cx.covGaps.map(b => `${esc(b.mk.split('-').reverse().join('/'))}: בעו״ש ${fmt0(b.bank)}, בתדפיסים ${fmt0(b.card)}, פער ${fmt0(b.gap)}`).join(' · ')}. הפער נשאר בדוח ב״ללא שיוך״ (שורת ״פער הצלבה״), כך ששום סכום לא יוצא מהנתונים.</b>` : ' סכום העסקאות בתדפיסים מכסה את החיובים, ולכן אין פער.'} <button class="btn ghost" data-act="drill" data-cat="skip">הצגה</button></div>` : ''}
     ${haveBank && haveCard ? crossDiag(cx) : ''}
     <div class="card"><h2>שורות חיוב ללא שיוך</h2>
       <div class="bar2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)"><input type="text" id="fq" value="${esc(ui.fixQ)}" placeholder="חיפוש בית עסק" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--field)">${drillControls({group:ui.fixGroup})}
