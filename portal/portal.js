@@ -76,8 +76,8 @@ async function save() {
 async function absorb(envelope, version) {
   const remote = normalizeBook(await openSym(P.key, envelope, CTX));
   const before = clone(P.local);
-  P.local = P.dirty ? mergeBooks(P.base, P.local, remote, 'client') : remote;
-  P.base = remote; P.version = version;
+  P.local = P.dirty ? mergeBooks(P.base, P.local, remote, 'client') : clone(remote);
+  P.base = remote; P.version = version;   // base and local must never share objects
   P.dirty = !booksEqual(P.local, remote);
   store();
   if (!booksEqual(before, P.local) && !isTyping()) render(false);
@@ -239,7 +239,7 @@ async function start() {
   const d = restore();
   if (d && !booksEqual(d.base, d.local)) {               // unsaved edits from last time
     P.local = mergeBooks(d.base, d.local, remote, 'client'); P.dirty = !booksEqual(P.local, remote);
-  } else { P.local = remote; P.dirty = false; }
+  } else { P.local = clone(remote); P.dirty = false; }
   P.base = remote; P.version = r.version;
   P.monthId = d && d.monthId && P.local.months.some(m => m.id === d.monthId) ? d.monthId : null;
   store(); render();
