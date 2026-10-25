@@ -265,9 +265,10 @@ async function decryptUpload(u) {
 }
 
 // Decrypt the client's new files and feed them to the existing statement import (דוח ראשוני).
-async function importUploads(clientId) {
+async function importUploads(clientId, again) {
   const c = clientById(clientId); if (!c) throw new Error('client');
-  const list = uploadsOf(clientId).filter(u => !u.imported_at);
+  // "again" re-reads files that were already loaded; rows already in the report are skipped as duplicates
+  const list = uploadsOf(clientId).filter(u => again || !u.imported_at);
   if (!list.length) return;
   const files = [];
   for (const u of list) {
@@ -559,14 +560,19 @@ function uploadsInboxCard() {
   const byClient = {};
   st.uploads.filter(u => !u.imported_at).forEach(u => { const l = st.links.find(x => x.id === u.link_id); if (l) (byClient[l.client_ref] = byClient[l.client_ref] || []).push(u); });
   const ids = Object.keys(byClient);
-  if (!ids.length) return '';
+  const done = {};
+  st.uploads.filter(u => u.imported_at).forEach(u => { const l = st.links.find(x => x.id === u.link_id); if (l && clientById(l.client_ref)) done[l.client_ref] = (done[l.client_ref] || 0) + 1; });
+  const again = Object.keys(done).filter(id => !byClient[id]);
+  const againHtml = again.length ? `<details class="small"><summary>דוחות שכבר נטענו (טעינה מחדש)</summary><div class="ilist">${again.map(id => `<div class="irow"><div><b>${esc(clientById(id).name)}</b></div><div class="small">${done[id]} קבצים</div><div>${btn('upload-reimport', 'טעינה מחדש', `data-id="${esc(id)}"`, 'btn ghost')}</div></div>`).join('')}</div>
+    <p class="small">טעינה מחדש קוראת שוב את הקבצים, ומוסיפה לדוח רק שורות שעוד לא נמצאות בו.</p></details>` : '';
+  if (!ids.length) return againHtml ? card('דוחות שהועלו', againHtml) : '';
   return card(`דוחות שהועלו <span class="ibadge">${ids.reduce((a, id) => a + byClient[id].length, 0)}</span>`, `<div class="ilist">${ids.map(id => {
     const c = clientById(id), list = byClient[id], link = st.links.find(x => x.id === list[0].link_id), meta = (link && st.linkMeta[link.id]) || {};
     const names = list.map(u => st.upDec[u.id] ? st.upDec[u.id].label : null).filter(Boolean);
     return `<div class="irow"><div><b>${esc((c && c.name) || meta.clientName || 'לקוח לא מזוהה')}</b><br><span class="small">${list.length} קבצים${link && link.submit_count ? ' · סיים/ה להעלות' : ' · עדיין מעלה'}</span></div>
       <div class="small">${names.length ? names.map(esc).join(' · ') : '<button class="btn ghost sm" data-ia="upload-names" data-id="' + esc(id) + '">הצגת שמות הקבצים</button>'}</div>
       <div>${c ? btn('upload-import', 'טעינה לדוח הראשוני', `data-id="${esc(id)}"`) : ''}</div></div>`;
-  }).join('')}</div><p class="small">הטעינה מפענחת את הקבצים במחשב שלך ומכניסה אותם ל״דוח ראשוני״ של הלקוח/ה, כמו גרירת תדפיסים.</p>`);
+  }).join('')}</div><p class="small">הטעינה מפענחת את הקבצים במחשב שלך ומכניסה אותם ל״דוח ראשוני״ של הלקוח/ה, כמו גרירת תדפיסים.</p>${againHtml}`);
 }
 
 function inboxCard() {
@@ -730,6 +736,7 @@ document.addEventListener('click', e => {
     case 'signout': busy('signout', async () => { stopPoll(); await sb.auth.signOut(); st.phase = 'login'; st.user = null; st.keys = []; st.dec = {}; st.linkMeta = {}; }); break;
     case 'upload-create': busy('upload-create', () => createUploadLink(id)); break;
     case 'upload-import': busy('upload-import', () => importUploads(id)); break;
+    case 'upload-reimport': busy('upload-reimport', () => importUploads(id, true)); break;
     case 'upload-names': busy('upload-names', async () => { for (const u of uploadsOf(id)) await decryptUpload(u); }); break;
     case 'portal-create': busy('portal-create', () => createPortal(id, document.getElementById('in-tpl').checked)); break;
     case 'portal-tpl': busy('portal-tpl', () => portalTemplate(id)); break;
