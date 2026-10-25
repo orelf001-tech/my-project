@@ -30,3 +30,11 @@
 .pstatus:empty{display:none}
 .pstatus.warn{color:var(--bad-fg)}
 @media (max-width:520px){.psum{grid-template-columns:repeat(2,minmax(0,1fr))}.psum>div:nth-child(3){border-inline-start:0}.psum>div{border-bottom:1px solid var(--line)}.prow{grid-template-columns:minmax(0,1fr) 110px 36px}}
+details.sec>summary{list-style:none;cursor:pointer;background:var(--hdr);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary .sh{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:19px}
+details.sec>summary .sh::after{content:'▾';font-size:16px;color:var(--muted);margin-inline-start:6px;transition:transform .2s}
+details.sec[open]>summary .sh::after{transform:rotate(180deg)}
+details.sec>summary .sh b{flex:1}
+details.sec>summary small{color:var(--ink);opacity:.75;font-size:14px}
+details.sec .track{margin:0;padding:10px 16px;font-size:15px;background:color-mix(in srgb,var(--cat) calc(var(--catmix) * .25),var(--card));border-bottom:1px solid var(--line)}

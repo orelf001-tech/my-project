@@ -17,7 +17,7 @@ const clone = x => JSON.parse(JSON.stringify(x));
 const app = document.getElementById('app');
 const cfg = window.CASHFLOW_CONFIG || {};
 
-const P = { token: '', key: '', base: null, local: null, version: 0, monthId: null, dirty: false, saving: false, status: '', storeKey: '', confirmNew: false };
+const P = { open: new Set(['inc', 'var']), token: '', key: '', base: null, local: null, version: 0, monthId: null, dirty: false, saving: false, status: '', storeKey: '', confirmNew: false };
 
 const REASONS = {
   invalid: 'הקישור לא תקין. כדאי לבקש מהמאמנת את הקישור שלך שוב.',
@@ -118,7 +118,8 @@ function monthNav() {
 }
 
 function rowsHtml(m, s) {
-  const list = s.income ? m.income : (m.cats[s.id] || []);
+  const list = (s.income ? m.income : (m.cats[s.id] || []))
+    .filter(it => it.by === 'client' || String(it.label || '').trim() || n0(it.amount) || n0(it.budget) || n0(it.paid));   // coach's blank spare rows stay hidden
   const weekly = WEEKLY.has(s.id);
   return list.map(it => {
     const mine = it.by === 'client';
@@ -139,12 +140,12 @@ function rowsHtml(m, s) {
 
 function sectionCard(m, s, t) {
   const tot = s.income ? t.inc : t.per[s.id].p, bud = s.income ? 0 : t.per[s.id].b;
-  return `<section class="card sec" data-color="${s.color}">
-    <header><h2>${esc(s.title)}</h2>${s.track ? `<p>${esc(s.track)}</p>` : ''}</header>
+  return `<details class="card sec" data-color="${s.color}" data-sec="${s.id}" ${P.open.has(s.id) ? 'open' : ''}>
+    <summary><span class="sh"><b>${esc(s.title)}</b><span class="num" data-stot="${s.id}">${fmt(tot)}</span></span>${bud ? `<small>תקציב ${fmt(bud)}</small>` : ''}</summary>
+    ${s.track ? `<p class="track">${esc(s.track)}</p>` : ''}
     <div class="rows">${rowsHtml(m, s) || '<p class="unit">אין שורות.</p>'}</div>
     <button class="add" data-act="addrow" data-c="${s.id}">+ הוספת שורה</button>
-    <div class="tot"><span>${s.income ? 'סה״כ הכנסות' : 'סה״כ שולם'}${bud ? ` <small>(תקציב ${fmt(bud)})</small>` : ''}</span><span class="num" data-stot="${s.id}">${fmt(tot)}</span></div>
-  </section>`;
+  </details>`;
 }
 
 function summary(t) {
@@ -192,6 +193,7 @@ app.addEventListener('input', e => {
   else it[d.f] = n0(e.target.value);
   refreshTotals(); changed();
 });
+app.addEventListener('toggle', e => { const id = e.target.dataset && e.target.dataset.sec; if (id) { if (e.target.open) P.open.add(id); else P.open.delete(id); } }, true);
 app.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const m = curMonth();
