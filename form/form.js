@@ -85,7 +85,6 @@ function welcomeView() {
     <h2 tabindex="-1" id="h">שלום${a.name ? ' ' + esc(a.name) : ''} 👋</h2>
     <p class="lead">בטופס הזה ממלאים את ההכנסות וההוצאות של משק הבית בחודש רגיל. זה לוקח בערך 10–15 דקות.</p>
     <ul class="bullets">
-      <li>אין צורך לדייק. הערכה טובה מספיקה, ואפשר לעגל.</li>
       <li>שורה שלא רלוונטית פשוט משאירים ריקה.</li>
       <li>אפשר לשנות שם של שורה ולהוסיף שורות.</li>
       <li>הכול נשמר אוטומטית במכשיר הזה, אפשר לצאת ולחזור דרך אותו קישור.</li>
@@ -143,7 +142,6 @@ function reviewView() {
       <label class="check"><input type="checkbox" id="consent" data-act="consent" ${S.consent ? 'checked' : ''}>
         <span>אני מאשר/ת לשלוח את המידע הזה למאמנת לצורך הליווי הפיננסי. המידע מוצפן במכשיר שלי לפני השליחה, נשמר בשרת רק עד שהמאמנת קולטת אותו, ונמחק ממנו לאחר מכן.</span></label>
       ${S.error ? `<div class="msg err" role="alert">${esc(S.error)}</div>` : ''}
-      <button class="link" data-act="cleardraft">מחיקת הטיוטה מהמכשיר הזה</button>
     </div>
   </section>
   ${nav(true, 'send', S.sending ? 'שולח…' : 'שליחה מוצפנת למאמנת', !S.consent || S.sending)}`;
@@ -195,7 +193,6 @@ app.addEventListener('click', async e => {
       break;
     }
     case 'delrow': S.answers.sections[b.dataset.s].splice(+b.dataset.r, 1); saveDraft(); render(null); break;
-    case 'cleardraft': clearDraft(); S.answers = blankAnswers(S.prefill); S.step = 0; S.consent = false; render(); flashSaved('הטיוטה נמחקה'); break;
     case 'again': S.done = false; S.step = STEPS.length - 1; S.consent = false; render(); break;
     case 'send': await send(); break;
   }
