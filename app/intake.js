@@ -359,6 +359,13 @@ async function createPortal(clientId, withTemplate) {
   await refresh();
 }
 
+async function portalUntemplate(clientId) {
+  const c = clientById(clientId); if (!c || !c.portal) return;
+  c.portal.meta = { templateUrl: '', templateDone: false };
+  cf.persist();
+  st.msg = 'התבנית הוסרה. ' + c.name + ' יראה/תראה ישר את הדוח החודשי.';
+  await refresh();
+}
 async function portalTemplate(clientId) {
   const c = clientById(clientId); if (!c || !c.portal) return;
   c.portal.meta = { templateUrl: await createLink(c.id, true, 30, true), templateDone: false };
@@ -527,14 +534,14 @@ function portalCard() {
     body = `<div class="linkbox"><p><b>ל${esc(cur.name)} יש קישור קבוע לדוח החודשי.</b> <span class="small">${esc(seen + upd)}</span></p>
       ${share(cur.portal.url, text, 'הדוח החודשי שלי')}
       <p class="small">מה שהלקוח/ה ממלא/ה מתעדכן אצלך בתיק, בחודשים של מעקב חודשי (עמודת ״שולם״ והשבועות). תקציבים ושמות סעיפים שאת משנה מתעדכנים אצלו/ה.</p>
-      <div class="row-btns">${meta.templateUrl && !meta.templateDone ? '<span class="badge st-over">תבנית ראשונית ממתינה למילוי</span>' : btn('portal-tpl', 'צירוף תבנית ראשונית לדוח', `data-id="${esc(cur.id)}"`, 'btn ghost')}
+      ${meta.templateUrl && !meta.templateDone ? `<div class="warn-box">בראש הדוח של ${esc(first)} מופיעה בקשה למלא את התבנית הראשונית. ${btn('portal-untpl', 'הסרת התבנית: ישר לדוח החודשי', `data-id="${esc(cur.id)}"`)}</div>` : ''}
+      <div class="row-btns">${meta.templateUrl && !meta.templateDone ? '' : `<details class="small"><summary>אפשרויות נוספות</summary><p>${btn('portal-tpl', 'בקשה מהלקוח/ה למלא גם את התבנית הראשונית', `data-id="${esc(cur.id)}"`, 'btn ghost')}</p></details>`}
       ${st.revokePortal === cur.id ? `<button class="btn danger" data-ia="portal-revoke-yes" data-id="${esc(cur.id)}">להפסיק את הגישה?</button>` : `<button class="btn ghost" data-ia="portal-revoke" data-id="${esc(cur.id)}">הפסקת הגישה</button>`}</div></div>`;
   } else {
-    body = `<p>הלקוח/ה מקבל/ת קישור קבוע אחד, ממנו:</p>
-      <ul class="steps"><li>ממלאים פעם אחת את <b>התבנית החודשית</b> (אם מסמנים למטה).</li><li>ממלאים כל שבוע את <b>הדוח החודשי</b>, רואים את החודשים הקודמים ופותחים חודש חדש.</li></ul>
+    body = `<p>הלקוח/ה מקבל/ת קישור קבוע אחד, שנפתח <b>ישר בדוח החודשי</b> עם התקציב שבניתן בפגישה: ממלאים בו כל שבוע את ההוצאות, רואים את החודשים הקודמים ופותחים חודש חדש.</p>
       <p class="small">מה שהלקוח/ה ממלא/ה מגיע מוצפן לתיק שלו/ה אצלך. הלקוח/ה לא רואה את המערכת שלך ולא לקוחות אחרים.</p>
-      <label class="chk"><input type="checkbox" id="in-tpl" ${st.withTpl ? 'checked' : ''}> לצרף את התבנית החודשית למילוי ראשון</label>
-      <p>${btn('portal-create', 'יצירת קישור אישי ללקוח/ה', `data-id="${esc(cur.id)}"`)}</p>`;
+      <p>${btn('portal-create', 'יצירת קישור אישי לדוח החודשי', `data-id="${esc(cur.id)}"`)}</p>
+      <details class="small"><summary>אפשרויות נוספות</summary><label class="chk"><input type="checkbox" id="in-tpl" ${st.withTpl ? 'checked' : ''}> לבקש מהלקוח/ה למלא קודם גם את התבנית הראשונית (בדרך כלל לא צריך אחרי הפגישה)</label></details>`;
   }
   return card('<span class="nb">3</span> אחרי הפגישה: קישור קבוע לדוח החודשי', `${body}
     <details class="small" id="in-tplonly" ${st.tplOpen ? 'open' : ''}><summary>שליחת תבנית בלבד, בלי דוח חודשי</summary>
@@ -775,6 +782,7 @@ document.addEventListener('click', e => {
     case 'upload-names': busy('upload-names', async () => { for (const u of uploadsOf(id)) await decryptUpload(u); }); break;
     case 'portal-create': busy('portal-create', () => createPortal(id, document.getElementById('in-tpl').checked)); break;
     case 'portal-tpl': busy('portal-tpl', () => portalTemplate(id)); break;
+    case 'portal-untpl': busy('portal-untpl', () => portalUntemplate(id)); break;
     case 'portal-revoke': st.revokePortal = id; rerender(); break;
     case 'portal-revoke-yes': st.revokePortal = null; busy('portal-revoke', () => revokePortal(id)); break;
     case 'create': {
