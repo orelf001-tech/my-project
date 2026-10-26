@@ -165,7 +165,11 @@ const cl = () => ws.clients.find(c => c.id === ws.cid) || ws.clients[0];
 const curMonth = () => { const c = cl(); if (c.view === 'template') return c.template ? c.template.month : null; return c.months.find(m => m.id === c.monthId) || null; };
 let saveTimer = null;
 function setSaved(t){ const el = document.getElementById('saved'); if (el) el.textContent = t; }
-function persist(){ clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(KEY2, JSON.stringify(ws)); setSaved('נשמר ✓'); } catch(e) { setSaved('לא ניתן לשמור בדפדפן הזה'); } }, 250); }
+function saveNow(){ clearTimeout(saveTimer); saveTimer = null; try { localStorage.setItem(KEY2, JSON.stringify(ws)); setSaved('נשמר ✓'); } catch(e) { setSaved('לא ניתן לשמור בדפדפן הזה'); } }
+function persist(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 250); }
+// a refresh or closing the tab right after a change must not lose it
+window.addEventListener('pagehide', () => { if (saveTimer) saveNow(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) saveNow(); });
 const ui = {fixGroup:true, panel:null, delArm:false, resetArm:false, delClientArm:null, msg:'', pending:null, drill:null, applyAll:true, fixQ:'', limit:120, open:{}};
 
 /* ================= tracking calculations ================= */
