@@ -956,7 +956,7 @@ function cubeCompact(m, cat){
       <span class="num" data-calc="rowLeft" data-c="${cat.id}" data-i="${it.id}"></span>
       ${D ? `<input class="endm" type="month" data-f="end" data-c="${cat.id}" data-i="${it.id}" value="${esc(it.end || '')}" aria-label="מועד סיום העסקה" title="מועד סיום העסקה">` : ''}
     </div>`).join('');
-  return `<article class="cube${D ? ' wide' : ''}" style="--cat:#${cat.color}">
+  return `<article class="cube" style="--cat:#${cat.color}">
     <header class="cube-h"><h3>${esc(cat.name)}</h3></header>
     <div class="row head ${cc}"><span></span><span>סעיף</span><span>תקציב</span><span>שולם</span><span>נותר</span>${D ? '<span>מסתיים</span>' : ''}</div>
     ${rows}
@@ -1057,8 +1057,8 @@ function monthView(m){
       ${cubeIncome(m, BY.inc)}
       ${cubeWeekly(m, BY.var)}
       ${cube('hou')}${cube('sub')}${cube('trn')}${cube('med')}
-      ${cube('ins')}${cube('dea')}${cube('sto')}
-      ${cube('loa')}
+      ${cube('ins')}${cube('dea')}<div class="stack">${cube('loa')}${cube('sto')}</div>
+     ${(cl().extraCats || []).map(x => BY[x.id] ? cube(x.id) : '').join('')}
     </div>
   </section>`;
 }
