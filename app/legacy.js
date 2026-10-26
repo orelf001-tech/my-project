@@ -73,7 +73,7 @@ function catInUse(id){
 }
 function delClientCat(id){
   const c = cl(); if (catInUse(id)) return false;
-  c.extraCats = (c.extraCats || []).filter(x => x.id !== id); c.months.forEach(m => { delete m.cats[id]; });
+  c.extraCats = (c.extraCats || []).filter(x => x.id !== id); c.months.forEach(m => { delete m.cats[id]; }); if (c.extraSubs) delete c.extraSubs[id];
   applyClientCats(c); persist(); return true;
 }
 const TGROUPS_OF = () => GROUPS.map(g => ({id:g.id, name:g.name, cats:g.cats.filter(id => !NOT_IN_MONTHS.includes(id))})).filter(g => g.cats.length);
@@ -632,18 +632,28 @@ function buildReport(){
 }
 
 /* ================= views: shared pieces ================= */
+const subsOf = id => { const own = ((cl().extraSubs || {})[id] || []); return (SUBLIST[id] || []).concat(own.filter(x => !(SUBLIST[id] || []).includes(x))); };
+function addClientSub(id, name){
+  const c = cl(); name = String(name || '').replace(/[\/›]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+  if (!BY[id] || !name) return 'צריך לבחור קטגוריה ולכתוב שם לשורה.';
+  c.extraSubs = c.extraSubs || {}; const l = c.extraSubs[id] = c.extraSubs[id] || [];
+  if (!subsOf(id).includes(name)) l.push(name);
+  const dl = document.getElementById('catDL'); if (dl) dl.remove(); persist(); return '';
+}
 function allCats(){
-  const out = ['inc'].concat((SUBLIST.inc || []).map(s => 'inc/' + s));
-  GROUPS.forEach(g => g.cats.forEach(id => { out.push(id); (SUBLIST[id] || []).forEach(s => out.push(id + '/' + s)); }));
+  const out = ['inc'].concat(subsOf('inc').map(s => 'inc/' + s));
+  GROUPS.forEach(g => g.cats.forEach(id => { out.push(id); subsOf(id).forEach(s => out.push(id + '/' + s)); }));
   return out.concat(['uns', 'once', 'skip']);
 }
 function catLabel(s){
   s = String(s || ''); const i = s.indexOf('/'), c = i < 0 ? s : s.slice(0, i), sub = i < 0 ? '' : s.slice(i + 1), b = BY[c];
   if (!b) return s;
-  return sub ? b.name + ' › ' + sub : b.name + ((SUBLIST[c] || []).length ? ' (כללי)' : '');
+  return sub ? b.name + ' › ' + sub : b.name + (subsOf(c).length ? ' (כללי)' : '');
 }
 function labelToCat(v){ v = String(v || '').trim(); if (!v) return null; for (const x of allCats()) if (x === v || catLabel(x) === v) return x; return null; }
-const NEWCAT = '+ קטגוריה חדשה: ', NEWCAT_HINT = '+ קטגוריה חדשה ללקוח הזה (הקלידי שם)';
+const NEWCAT = '+ קטגוריה חדשה: ', NEWCAT_HINT = '+ קטגוריה חדשה ללקוח הזה (הקלידי שם)', NEWSUB = '+ שורה חדשה: ';
+// "ירוקים ונהנים › שתילים" (or with /) = a new line inside an existing category
+const subTarget = v => { const m = String(v).replace(NEWSUB, '').match(/^(.+?)\s*[›\/]\s*(.+)$/); if (!m) return null; const name = m[1].replace(/\s*\(כללי\)$/, '').trim(), x = CATS.concat(PSEUDO).find(c => c.name === name); return x && !['uns', 'skip', 'once'].includes(x.id) ? {id:x.id, sub:m[2].trim()} : null; };
 function ensureDatalist(){ applyClientCats(cl()); if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = `<option value="${esc(NEWCAT_HINT)}"></option><option id="catNew" value="" disabled></option>` + allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
 const xStatus = items => {
   const st = items.filter(t => t.settle && !t.man); if (!st.length || st.length !== items.length || st.some(t => !t.x)) return '';
@@ -792,9 +802,13 @@ function crossDiag(cx){
 }
 function catsPanel(){
   const c = cl(), list = c.extraCats || [];
-  return `<div class="card noprint" style="margin-bottom:14px"><h2>קטגוריות מיוחדות ללקוח הזה</h2><div class="pad">
+  return `<div class="card noprint" style="margin-bottom:14px"><h2>קטגוריות ושורות מיוחדות ללקוח הזה</h2><div class="pad">
     <p class="small">למשל ״הוצאות עסק״ או ״הוצאות על הורים״. הקטגוריה נוספת רק ל${esc(c.name)}: אפשר לשייך אליה שורות, היא מופיעה בדוח, בתקציב ובדוח החודשי של הלקוח/ה.</p>
     ${list.length ? `<div class="row-btns">${list.map(x => `<span class="tag">${esc(x.name)} ${ui.delCatArm === x.id ? `<button class="x" data-act="delcat-yes" data-id="${x.id}" title="למחוק" aria-label="למחוק">למחוק?</button>` : `<button class="x" data-act="delcat" data-id="${x.id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה">×</button>`}</span>`).join('')}</div>` : ''}
+    <p class="small" style="margin-top:12px"><b>הוספת שורה (סעיף) בתוך קטגוריה</b>, למשל ״שתילים״ בתוך ״ירוקים ונהנים״. אפשר גם להקליד בשדה הקטגוריה של שורה: ״ירוקים ונהנים › שתילים״.</p>
+    <div class="row-btns"><select id="subcat" aria-label="קטגוריה">${CATS.filter(x => x.id !== 'inc').map(x => `<option value="${x.id}" ${ui.subCat === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select><input type="text" id="newsub" maxlength="40" placeholder="שם השורה" aria-label="שם השורה"><button class="btn" data-act="addsub">+ הוספת שורה</button></div>
+    ${Object.keys(c.extraSubs || {}).some(k => (c.extraSubs[k] || []).length) ? `<p class="small">שורות שהוספת: ${Object.keys(c.extraSubs).filter(k => BY[k]).map(k => c.extraSubs[k].map(n => esc(BY[k].name + ' › ' + n)).join(' · ')).filter(Boolean).join(' · ')}</p>` : ''}
+    <p class="small" style="margin-top:12px"><b>קטגוריה חדשה</b></p>
     <div class="row-btns"><input type="text" id="newcat" maxlength="40" placeholder="שם הקטגוריה החדשה" aria-label="שם הקטגוריה החדשה"><button class="btn" data-act="addcat">+ הוספת קטגוריה</button>${ui.catMsg ? `<span class="note-s">${esc(ui.catMsg)}</span>` : ''}</div>
   </div></div>`;
 }
@@ -970,12 +984,14 @@ function cubeCompact(m, cat){
 }
 function cubeWeekly(m, cat){
   const c0 = cl(), B = m.locked ? m.cats.var.some(it => num(it.cur)) : (c0.months[0] && c0.months[0].id === m.id && c0.rep.tx.length > 0), cw = B ? 'c-weekly base' : 'c-weekly';
-  const CUR = (B && !m.locked) ? curMap() : {}; const curOf = it => m.locked ? num(it.cur) : (CUR[it.label.trim()] || 0);
+  // "מצב מצוי" comes from the analysis; the coach may type her own figure (curv), and clearing it brings the computed one back
+  const CUR = (B && !m.locked) ? curMap() : {}; const autoCur = it => m.locked ? num(it.cur) : (CUR[it.label.trim()] || 0);
+  const curOf = it => it.curv != null ? num(it.curv) : autoCur(it);
   const rows = (m.cats[cat.id] || []).map(it => `
     <div class="row ${cw}">
       <button class="x" data-act="delrow" data-c="${cat.id}" data-i="${it.id}" title="מחיקת סעיף" aria-label="מחיקת סעיף">×</button>
       <input class="lab" data-f="label" data-c="${cat.id}" data-i="${it.id}" value="${esc(it.label)}" placeholder="סעיף חדש" aria-label="שם הסעיף">
-      ${B ? `<span class="num cur">${curOf(it) ? fmt(curOf(it)) : '–'}</span>` : ''}
+      ${B ? `<input class="n cur ${it.curv != null ? 'man' : ''}" inputmode="decimal" dir="ltr" data-f="curv" data-c="${cat.id}" data-i="${it.id}" value="${it.curv != null ? nv(it.curv) : (autoCur(it) ? nv(autoCur(it)) : '')}" placeholder="–" aria-label="מצב מצוי" title="${it.curv != null ? 'הוזן ידנית. מחיקת הערך מחזירה את החישוב מהניתוח (' + fmt(autoCur(it)) + ')' : 'מחושב מניתוח הנתונים. אפשר לשנות'}">` : ''}
       <input class="n" inputmode="decimal" dir="ltr" data-f="budget" data-c="${cat.id}" data-i="${it.id}" value="${nv(it.budget)}" placeholder="–" aria-label="תקציב">
       ${[0,1,2,3,4].map(k => `<input class="n" inputmode="decimal" dir="ltr" data-f="w" data-w="${k}" data-c="${cat.id}" data-i="${it.id}" value="${nv(it.w[k])}" placeholder="–" aria-label="שבוע ${k+1}">`).join('')}
       <span class="num" data-calc="rowPaid" data-c="${cat.id}" data-i="${it.id}"></span>
@@ -1263,7 +1279,7 @@ function findItem(m, c, i){ return c === 'inc' ? m.income.find(x => x.id === i) 
 document.addEventListener('input', e => {
   const t = e.target, f = t && t.dataset ? t.dataset.f : null;
   if (t && t.classList && t.classList.contains('pick')) { const o = document.getElementById('catNew'), v = t.value.trim();
-    if (o) { const show = v && v !== NEWCAT_HINT && !v.startsWith(NEWCAT) && !labelToCat(v); o.value = show ? NEWCAT + v : ''; o.disabled = !show; } return; }
+    if (o) { const show = v && v !== NEWCAT_HINT && !v.startsWith(NEWCAT) && !v.startsWith(NEWSUB) && !labelToCat(v); o.value = show ? (subTarget(v) ? NEWSUB : NEWCAT) + v : ''; o.disabled = !show; } return; }
   if (t && t.id === 'dq') { ui.drill.q = t.value; ui.limit = 120; const l = document.getElementById('dlist'); if (l) l.innerHTML = listHTML(ui.drill); return; }
   if (t && t.id === 'fq') { ui.fixQ = t.value; ui.limit = 120; const l = document.getElementById('dlist'); if (l) l.innerHTML = listHTML(fixD()); return; }
   if (t && t.id === 'minc') { cl().rep.manualIncome = num(t.value); persist(); return; }
@@ -1277,6 +1293,7 @@ document.addEventListener('input', e => {
   if (f === 'label') it.label = t.value;
   else if (f === 'note') it.note = t.value;
   else if (f === 'end') it.end = t.value;
+  else if (f === 'curv') { if (String(t.value).trim() === '') delete it.curv; else it.curv = num(t.value); t.classList.toggle('man', it.curv != null); }
   else if (f === 'w') it.w[+t.dataset.w] = num(t.value);
   else it[f] = num(t.value);
   persist(); updateComputed();
@@ -1299,6 +1316,12 @@ document.addEventListener('change', async e => {
   if (t.dataset.file === 'auto') { if (t.files && t.files.length) await onFiles(t.files); t.value = ''; return; }
   if (t.dataset.file) { const f = t.files && t.files[0]; if (f) await onFile(f, t.dataset.file); t.value = ''; return; }
   if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick') && (t.value === NEWCAT_HINT)) { t.value = ''; t.placeholder = 'שם הקטגוריה החדשה, ואז Enter'; t.dataset.mknew = '1'; return; }
+  if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick') && t.value.trim() && !labelToCat(t.value) && subTarget(t.value)) {
+    const x = subTarget(t.value), err = addClientSub(x.id, x.sub); if (err) { flash(err); t.value = catLabel(t.dataset.cur); return; }
+    const v = x.id + '/' + String(x.sub).replace(/[\/›]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (t.dataset.t) assignTx(t.dataset.t, v); else setRule(t.dataset.g, v);
+    render(); return;
+  }
   if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick') && t.value.trim() && !labelToCat(t.value) && (t.value.startsWith(NEWCAT) || t.dataset.mknew || confirm(`ליצור ל${cl().name} קטגוריה חדשה בשם ״${t.value.trim()}״?`))) {
     // a new category for this client, straight from the row being assigned
     const name = t.value.replace(NEWCAT, '').trim(), err = addClientCat(name), x = (cl().extraCats || []).find(c => c.name === name);
@@ -1450,6 +1473,7 @@ document.addEventListener('click', async e => {
     case 'create': doCreate(); break;
     case 'createclient': createClient(); break;
     case 'addcat': { const inp = document.getElementById('newcat'); ui.catMsg = addClientCat(inp && inp.value); ui.delCatArm = null; render(); break; }
+    case 'addsub': { const sel = document.getElementById('subcat'), inp = document.getElementById('newsub'); ui.subCat = sel && sel.value; ui.catMsg = addClientSub(sel && sel.value, inp && inp.value) || ('נוספה שורה ״' + (inp && inp.value.trim()) + '״. אפשר לבחור אותה עכשיו בשדה הקטגוריה.'); render(); break; }
     case 'delcat': ui.delCatArm = b.dataset.id; ui.catMsg = ''; render(); break;
     case 'delcat-yes': ui.catMsg = delClientCat(b.dataset.id) ? '' : 'אי אפשר למחוק: יש שורות או תקציב בקטגוריה הזו. קודם מעבירים אותם לקטגוריה אחרת.'; ui.delCatArm = null; render(); break;
     case 'pick': ws.cid = b.dataset.id; ui.pending = null; ui.drill = null; crossFor = null; persist(); render(); break;
@@ -1530,6 +1554,8 @@ render();
 try { setSaved(localStorage.getItem(KEY2) ? 'נשמר ✓' : ''); } catch(_) {}
 if (!(window.claude && window.claude.use)) dl = {save:async ({filename, data}) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], {type:'application/json'})); a.download = filename; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }};
 try { if (window.claude && window.claude.use) window.claude.use('downloads').then(d => { dl = d; if (cl().view === 'backup') render(); }).catch(() => {}); } catch(_) {}
+// the "מצב מצוי" total follows a typed figure once the field is left
+document.addEventListener('change', e => { if (e.target && e.target.dataset && e.target.dataset.f === 'curv') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
 /* drag a monthly card by its title to move it */
 let dragCube = null;
 document.addEventListener('dragstart', e => { const h = e.target.closest && e.target.closest('[data-drag]'); if (!h) return; dragCube = h.dataset.drag; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', dragCube); } catch(_) {} });
