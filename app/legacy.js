@@ -1067,6 +1067,13 @@ function moveCube(id, to){
   const order = cubeOrder(), from = order.indexOf(id); if (from < 0 || to < 0 || to >= order.length) return;
   order.splice(from, 1); order.splice(to, 0, id); ws.cubeOrder = order; persist(); render();
 }
+// each total in the summary is followed by the categories it is made of
+function kvGroups(){
+  const cell = (calc, attr, cls) => `<div class="${cls}"><span class="num" data-calc="${calc}" ${attr}></span></div>`;
+  const NAMES = {fix:'סה״כ הוצאות קבועות', vr:'סה״כ הוצאות משתנות', cus:'סה״כ קטגוריות של הלקוח'};
+  return TGROUPS_OF().map(g => `<div class="grp">${NAMES[g.id] || 'סה״כ ' + esc(g.name)}</div>${cell('bdB', `data-r="${g.id}"`, 'grp')}${cell('bdP', `data-r="${g.id}"`, 'grp')}${cell('bdL', `data-r="${g.id}"`, 'grp')}`
+    + g.cats.map(id => `<div class="sub">${esc(BY[id].name)}</div>${cell('catB', `data-c="${id}"`, 'sub')}${cell('catP', `data-c="${id}"`, 'sub')}${cell('catL', `data-c="${id}"`, 'sub')}`).join('')).join('');
+}
 function monthView(m){
   { const c0 = cl(); if (c0.months[0] && c0.months[0].id === m.id && c0.rep.tx.length) syncVarItems(m); }
   const kvRow = (label, b, p, l, cls) => `<div class="${cls || ''}">${label}</div><div class="${cls || ''}"><span class="num" data-calc="${b}"></span></div><div class="${cls || ''}"><span class="num" data-calc="${p}"></span></div><div class="${cls || ''}"><span class="num" data-calc="${l}"></span></div>`;
@@ -1093,8 +1100,7 @@ function monthView(m){
         <div class="big"><span class="t">סה״כ הכנסות</span><span class="v num" data-calc="mInc"></span></div>
         <div class="kv">
           <div class="h">מדד</div><div class="h">תקציב</div><div class="h">שולם</div><div class="h">נותר</div>
-          ${kvRow('סה״כ הוצאות קבועות (כולל מגורים)', 'mFixB', 'mFixP', 'mFixL')}
-          ${kvRow('סה״כ משתנות (כולל תחבורה, רפואה, אחר)', 'mVarB', 'mVarP', 'mVarL')}
+          ${kvGroups()}
           ${kvRow('סה״כ הוצאות', 'mTotB', 'mTotP', 'mTotL', 'tot')}
         </div>
         <div class="big rem"><span class="t">כמה נותר מהתקציב<br><small style="font-weight:400;color:var(--muted)">הכנסות פחות מה ששולם</small></span><span class="v num" data-calc="mRem"></span></div>
