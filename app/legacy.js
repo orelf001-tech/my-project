@@ -438,6 +438,9 @@ function crossCheck(rep){
   const bankDates = rep.tx.filter(t => t.type === 'bank').map(t => t.date).sort();
   const period = bankDates.length ? {from:bankDates[0].slice(0, 7), to:bankDates[bankDates.length - 1].slice(0, 7)} : null;
   rep.period = period;
+  rep.cdCards = {};
+  if (period) { const ks = new Set(rep.tx.filter(t => t.type === 'card' && t.cd).map(t => t.card || ''));
+    ks.forEach(k => { if (!rep.tx.some(t => t.type === 'card' && (t.card || '') === k && t.cd && t.cd.slice(0, 7) > period.to)) rep.cdCards[k] = true; }); }
   if (period) rep.tx.forEach(t => { if (t.type !== 'card') return; const mk = monthOfTx(t, rep); if (mk < period.from || mk > period.to) t.out = mk > period.to ? 'after' : 'before'; });
   const groups = {}, cards = rep.tx.filter(t => t.type === 'card'), cardIds = new Set(cards.map(t => t.card).filter(Boolean));
   cards.forEach(t => { const k = (t.card || '') + '|' + (t.cd || ''); const g = groups[k] || (groups[k] = {k, src:t.src, card:t.card || '', cd:t.cd, sum:0, n:0, matched:false}); g.sum += (t.kind === 'exp' ? t.amt : -t.amt); g.n++; });
@@ -583,7 +586,9 @@ function installmentsHTML(){
 }
 
 /* ================= the report ================= */
-function monthOfTx(t, rep){ const d = (t.type === 'card' && t.cd && (rep.cardBy === 'cd' || t.inst)) ? t.cd : t.date; return d.slice(0, 7); }
+// A card whose statement of the month after the period was not loaded is counted by charge month: otherwise the
+// period's last month would miss its purchases (they sit in that missing statement).
+function monthOfTx(t, rep){ const d = (t.type === 'card' && t.cd && (rep.cardBy === 'cd' || t.inst || (rep.cdCards && rep.cdCards[t.card || '']))) ? t.cd : t.date; return d.slice(0, 7); }
 function buildReport(){
   applyClientCats(cl());
   const rep = cl().rep, M = {}, SM = {}, keys = new Set();
@@ -1262,7 +1267,7 @@ document.addEventListener('change', async e => {
   if (t.dataset.file) { const f = t.files && t.files[0]; if (f) await onFile(f, t.dataset.file); t.value = ''; return; }
   if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick')) { const v = labelToCat(t.value); if (!v || v === t.dataset.cur) { t.value = catLabel(t.dataset.cur); return; } if (t.dataset.t) assignTx(t.dataset.t, v); else setRule(t.dataset.g, v); refreshAfterAssign(); return; }
   if (t.id === 'dm') { ui.drill.month = t.value || null; ui.limit = 120; renderDrill(); return; }
-  if (t.id === 'cardby') { cl().rep.cardBy = t.value; persist(); render(); return; }
+  if (t.id === 'cardby') { cl().rep.cardBy = t.value; recomputeAll(); persist(); render(); return; }
   if (t.id === 'clientSel') { if (t.value === '__new') { ui.panel = 'newclient'; renderHero(); renderPanel(); return; } ws.cid = t.value; ui.panel = null; ui.drill = null; ui.pending = null; crossFor = null; persist(); render(); return; }
   if (t.dataset.act === 'applyall') { ui.applyAll = t.checked; return; }
   if (t.dataset.act === 'clientfile') { ui.clientFile = t.checked; if (t.checked) ui.allClients = false; render(); return; }
@@ -1356,8 +1361,11 @@ function doCreate(){
   c.months.push(m); c.monthId = m.id; c.view = 'month'; ui.panel = null; persist(); render(); window.scrollTo(0, 0);
 }
 function flash(msg){ ui.msg = msg; const el = document.getElementById('bkmsg'); if (el) el.textContent = msg; }
-document.addEventListener('focusin', e => { const t = e.target; if (t.classList && t.classList.contains('pick')) { setTimeout(() => { try { t.select(); } catch(_) {} }, 0); return; } if (t.classList && t.classList.contains('n')) { const m = curMonth(), it = m && findItem(m, t.dataset.c, t.dataset.i); if (it) { const v = t.dataset.f === 'w' ? it.w[+t.dataset.w] : it[t.dataset.f]; t.value = num(v) === 0 ? '' : String(num(v)); setTimeout(() => { try { t.select(); } catch(_) {} }, 0); } } });
-document.addEventListener('focusout', e => { const t = e.target; if (t.classList && t.classList.contains('pick')) { if (!labelToCat(t.value) && t.value !== catLabel(t.dataset.cur)) t.value = catLabel(t.dataset.cur); return; } if (t.classList && t.classList.contains('n')) t.value = nv(t.value); });
+document.addEventListener('focusin', e => { const t = e.target; if (t.classList && t.classList.contains('pick')) {
+    // empty field = the whole list opens; typing searches it
+    t.dataset.prev = t.value; t.placeholder = t.value ? 'חיפוש קטגוריה (עכשיו: ' + t.value + ')' : 'חיפוש קטגוריה'; t.value = '';
+    setTimeout(() => { try { t.showPicker(); } catch(_) {} }, 0); return; } if (t.classList && t.classList.contains('n')) { const m = curMonth(), it = m && findItem(m, t.dataset.c, t.dataset.i); if (it) { const v = t.dataset.f === 'w' ? it.w[+t.dataset.w] : it[t.dataset.f]; t.value = num(v) === 0 ? '' : String(num(v)); setTimeout(() => { try { t.select(); } catch(_) {} }, 0); } } });
+document.addEventListener('focusout', e => { const t = e.target; if (t.classList && t.classList.contains('pick')) { t.placeholder = 'הקלידי קטגוריה או סעיף'; if (!labelToCat(t.value) && t.value !== catLabel(t.dataset.cur)) t.value = catLabel(t.dataset.cur); return; } if (t.classList && t.classList.contains('n')) t.value = nv(t.value); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target && e.target.id === 'newname') { e.preventDefault(); doCreate(); }
   if (e.key === 'Enter' && e.target && e.target.id === 'cname') { e.preventDefault(); createClient(); }
