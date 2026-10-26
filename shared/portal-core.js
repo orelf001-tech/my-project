@@ -45,7 +45,7 @@ export function bookFromMonths(months, extra = {}) {
   const extraCats = cleanExtraCats(extra.extraCats), ids = TRACK_IDS.concat(extraCats.map(x => x.id));
   return {
     type: BOOK_TYPE, v: 1, ...extra, extraCats,
-    months: months.filter(m => !m.locked).map(m => ({
+    months: months.filter(m => !m.locked && !m.baseline).map(m => ({
       id: String(m.id), label: String(m.label || ''),
       income: (m.income || []).map(it => cleanItem(it, 'inc')),
       cats: Object.fromEntries(ids.map(id => [id, ((m.cats || {})[id] || []).map(it => cleanItem(it, id))]))
@@ -59,8 +59,11 @@ export function normalizeBook(b) {
     { clientName: String(o.clientName || '').slice(0, 80), templateUrl: typeof o.templateUrl === 'string' ? o.templateUrl.slice(0, 600) : '', templateDone: !!o.templateDone, extraCats: o.extraCats });
 }
 
+const PLAN = new Set(['budget', 'end']);
 function mergeScalar(b, l, r, key, localSide) {
   if (same(l, r)) return l;
+  // budgets are set by the coach only: whatever the client's copy says, the coach's value stands
+  if (PLAN.has(key) && l !== undefined && r !== undefined) return localSide === 'coach' ? l : r;
   if (same(l, b)) return r;
   if (same(r, b)) return l;
   const clientWins = ACTUAL.has(key);

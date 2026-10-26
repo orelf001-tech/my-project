@@ -117,9 +117,13 @@ function monthNav() {
       : '<button class="chip addm" data-act="newmonth">+ חודש חדש</button>'}</nav>`;
 }
 
+// Once the coach has set a budget, the client sees exactly the budgeted lines (plus anything already filled in
+// or added by the client); the template's unused default lines stay hidden.
+const planned = m => Object.values(m.cats || {}).some(l => (l || []).some(it => n0(it.budget)));
 function rowsHtml(m, s) {
+  const strict = planned(m);
   const list = (s.income ? m.income : (m.cats[s.id] || []))
-    .filter(it => it.by === 'client' || String(it.label || '').trim() || n0(it.amount) || n0(it.budget) || n0(it.paid));   // coach's blank spare rows stay hidden
+    .filter(it => it.by === 'client' || n0(it.amount) || n0(it.budget) || n0(it.paid) || (it.w || []).some(n0) || (!strict && String(it.label || '').trim()));
   const weekly = WEEKLY.has(s.id);
   return list.map(it => {
     const mine = it.by === 'client';
@@ -165,8 +169,11 @@ function render(scroll = true) {
   if (!m) body += `<section class="card pad center"><p>עדיין אין חודש פתוח.</p><p class="unit">פותחים חודש חדש בכפתור ״+ חודש חדש״ למעלה.</p></section>`;
   else {
     const t = monthTotals(m);
-    body += `<p class="tip">💡 בוחרים יום קבוע בשבוע (שבת, ראשון או שני) ל״הנהלת חשבונות ביתית״, ובו ממלאים את ההוצאות של השבוע. הוצאות חודשיות ממלאים פעם בחודש. הכל נשמר אוטומטית.</p>`
-      + summary(t) + sections().map(s => sectionCard(m, s, t)).join('');
+    // categories with a budget or entries first; the rest stay folded, still there for an unplanned expense
+    const secs = sections(), used = s => s.income || !!rowsHtml(m, s), rest = secs.filter(s => !used(s));
+    body += `<p class="tip">💡 התקציב לכל סעיף נקבע בפגישה, ומופיע ליד הסעיף. ממלאים רק <b>כמה שולם בפועל</b>: הוצאות שבועיות פעם בשבוע, ביום קבוע (שבת, ראשון או שני), והוצאות חודשיות פעם בחודש. את ההכנסות מעדכנים כל חודש לפי מה שנכנס. הכל נשמר אוטומטית.</p>`
+      + summary(t) + secs.filter(used).map(s => sectionCard(m, s, t)).join('')
+      + (rest.length ? `<details class="card more"><summary>קטגוריות נוספות, בלי תקציב (${rest.length}): להוצאה שלא תוכננה</summary>${rest.map(s => sectionCard(m, s, t)).join('')}</details>` : '');
   }
   body += `<div class="pstatus" id="pstatus" role="status">${esc(P.status)}</div>`;
   app.innerHTML = body;

@@ -7,7 +7,7 @@ import * as C from './shared/crypto.js';
 import { SECTIONS, BY_ID, normalizeAnswers, LIMITS } from './shared/template.js';
 import { buildPrefill, prefillMonth, applyAnswers, compare, insights, summaryText } from './intake-core.js';
 import { keystore } from './keystore.js';
-import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, catIdsOf } from './shared/portal-core.js';
+import { bookFromMonths, normalizeBook, mergeBooks, booksEqual, catIdsOf, nextMonthLabel } from './shared/portal-core.js';
 
 const BOOK_CTX = 'cf-portal-book';
 const uploadBase = () => cfg.uploadUrl || String(cfg.formUrl || '').replace(/form\/?$/, 'upload/');
@@ -296,7 +296,7 @@ const portalRow = c => (c && c.portal ? st.portals.find(p => p.id === c.portal.i
 // Write a merged book back into the coach's months, keeping coach-only fields of each row.
 function applyBook(c, book, base) {
   const baseIds = new Set(((base && base.months) || []).map(m => m.id)), bookIds = new Set(book.months.map(m => m.id));
-  c.months = c.months.filter(m => m.locked || bookIds.has(m.id) || !baseIds.has(m.id));
+  c.months = c.months.filter(m => m.locked || m.baseline || bookIds.has(m.id) || !baseIds.has(m.id));
   book.months.forEach(bm => {
     let m = c.months.find(x => x.id === bm.id);
     if (!m) { m = cf.newMonth(bm.label); m.id = bm.id; c.months.push(m); }
@@ -320,6 +320,7 @@ async function syncPortals(rows) {
       try { const box = await C.open(row.key_box, k.privateKey, k.publicRaw); c.portal = { id: row.id, url: box.url, key: box.k, base: null, version: -1, meta: {} }; touched = true; }
       catch (_) { continue; }
     }
+    monthForClient(c);
     const P = c.portal, local = localBook(c);
     if (row.version === P.version && booksEqual(local, P.base)) continue;
     let remote;
@@ -341,8 +342,30 @@ async function syncPortals(rows) {
   return applied;
 }
 
+// The client fills a real month that carries the budget from the meeting. If there is none yet, open the
+// current month from the budget month; an empty month gets the budget lines.
+function monthForClient(c) {
+  const plan = c.months.find(m => m.baseline), months = c.months.filter(m => !m.locked && !m.baseline);
+  if (!plan) return;
+  const tb = m => Object.values(m.cats || {}).flat().reduce((a, it) => a + (+it.budget || 0), 0);
+  if (!months.length) {
+    const m = cf.newMonth(nextMonthLabel({ months: [] }), plan, true);
+    m.income = plan.income.map(i => ({ id: cf.uid(), label: i.label, amount: +i.amount || 0 }));
+    c.months.push(m); c.monthId = m.id; return;
+  }
+  const last = months[months.length - 1];
+  if (tb(last) > 0 || tb(plan) === 0) return;
+  Object.keys(plan.cats).forEach(id => (plan.cats[id] || []).forEach(p => {
+    if (!(+p.budget) && !String(p.label || '').trim()) return;
+    const list = last.cats[id] = last.cats[id] || [], it = list.find(x => x.label.trim() === p.label.trim());
+    if (it) { it.budget = +p.budget || 0; if (p.end) it.end = p.end; } else list.push(Object.assign(cf.mkItem(p.label), { budget: +p.budget || 0, end: p.end }));
+  }));
+  plan.income.forEach(p => { if (String(p.label || '').trim() && !last.income.some(x => x.label.trim() === p.label.trim())) last.income.push({ id: cf.uid(), label: p.label, amount: +p.amount || 0 }); });
+}
+
 async function createPortal(clientId, withTemplate) {
   const c = clientById(clientId); if (!c) throw new Error('client');
+  monthForClient(c);
   const key = st.keys[0];
   const token = C.randomToken(16), hash = await C.sha256Hex(token), K = C.newSymKey();
   const url = portalBase() + '#' + new URLSearchParams({ t: token, s: K }).toString();

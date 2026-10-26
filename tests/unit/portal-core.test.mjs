@@ -7,10 +7,11 @@ const month = (id, label, cats = {}, income = [{ id: 'i1', label: 'משכורת'
 const book = months => P.normalizeBook({ months });
 const clone = x => JSON.parse(JSON.stringify(x));
 
-test('bookFromMonths keeps shared fields only and skips locked months', () => {
+test('bookFromMonths keeps shared fields only and skips locked months and the planning sheet', () => {
   const b = P.bookFromMonths([
     { id: 'm0', label: 'תבנית', locked: true, income: [], cats: {} },
-    { id: 'm1', label: 'אוקטובר 2026', baseline: true, income: [{ id: 'i', label: 'משכורת', amount: 9000, cur: 1 }],
+    { id: 'mb', label: 'תקציב – חודש ראשון', baseline: true, income: [], cats: {} },
+    { id: 'm1', label: 'אוקטובר 2026', income: [{ id: 'i', label: 'משכורת', amount: 9000, cur: 1 }],
       cats: { var: [item('a', 'מזון', { budget: 2000, w: [500, 400], cur: 3 })], trn: [item('t', 'דלק', { paid: 300 })], hou: [item('h', 'שכר דירה', { budget: 4000, paid: 4000 })] } }
   ]);
   assert.equal(b.months.length, 1);
@@ -105,4 +106,13 @@ test('a category the coach added for one client travels in the book and merges',
   const next = P.newMonthFrom(merged, 'נובמבר');
   assert.deepEqual(next.cats.xbiz1.map(r => [r.label, r.budget, r.paid]), [['רואה חשבון', 400, 0]]);
   assert.deepEqual(P.normalizeBook({ months: [month('m', 'x')] }).extraCats, [], 'old books have none');
+});
+
+test('the client cannot change a budget, only what was paid', () => {
+  const base = book([month('m1', 'אוקטובר', { hou: [item('h', 'שכר דירה', { budget: 4000 })] })]);
+  const coach = clone(base), client = clone(base);
+  client.months[0].cats.hou[0].budget = 9999;              // edited in the client's copy
+  client.months[0].cats.hou[0].paid = 4000;
+  const onCoach = P.mergeBooks(base, coach, client, 'coach'), onClient = P.mergeBooks(base, client, coach, 'client');
+  for (const m of [onCoach, onClient]) assert.deepEqual([m.months[0].cats.hou[0].budget, m.months[0].cats.hou[0].paid], [4000, 4000]);
 });
