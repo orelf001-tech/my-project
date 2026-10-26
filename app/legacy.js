@@ -921,7 +921,9 @@ function transfer(cat, sub, value){
     it.label = lab; it.amount = v;
   } else {
     const list = m.cats[cat] || (m.cats[cat] = []);
-    let it = list.find(x => x.label.trim() === lab) || list.find(x => !x.label.trim() && !num(x.budget) && !num(x.cur));
+    // an empty row, or an unused placeholder row ("עסקה 1", "הלוואה 2"), takes the item's name
+    const free = x => (!x.label.trim() || /^(עסקה|הלוואה)\s*\d+$/.test(x.label.trim())) && !num(x.budget) && !num(x.paid) && !num(x.cur);
+    let it = list.find(x => x.label.trim() === lab) || list.find(free);
     if (!it) { it = mkItem(lab); list.push(it); }
     it.label = lab; it.budget = v;
     if (cat === 'dea') { const x = buildInstallments().list.find(y => y.desc.slice(0, 30) === sub); if (x && x.endKey) it.end = x.endKey; }
