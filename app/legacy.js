@@ -1181,7 +1181,7 @@ function render(){
   applyClientCats(cl()); ensureDatalist();
   renderHero(); renderNav(); renderPanel();
   const main = document.getElementById('main'), c = cl(), v = c.view;
-  if (REPV.includes(v)) { recomputeIfNeeded(); }
+  if (REPV.includes(v) || v === 'intake') { recomputeIfNeeded(); }
   if (v === 'load') main.innerHTML = loadView();
   else if (v === 'fix') main.innerHTML = fixView();
   else if (v === 'report') main.innerHTML = reportView();

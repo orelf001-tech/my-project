@@ -31,6 +31,11 @@ jobs:
           cp -R index.html .nojekyll form portal upload shared assets app _site/
           # the coach app loads shared modules and assets relative to itself
           cp -R shared assets _site/app/
+          # a new version reaches browsers right away: version the pages' own scripts and styles
+          v=${GITHUB_SHA::8}
+          for f in _site/app/index.html _site/form/index.html _site/portal/index.html _site/upload/index.html; do
+            if [ -f "$f" ]; then sed -i -E "s#(src|href)=\"([^\":]+\.(js|css))\"#\1=\"\2?v=$v\"#g" "$f"; fi
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
