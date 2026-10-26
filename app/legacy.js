@@ -644,6 +644,13 @@ function addClientSub(id, name){
   if (!subsOf(id).includes(name)) l.push(name);
   const dl = document.getElementById('catDL'); if (dl) dl.remove(); persist(); return '';
 }
+function delClientSub(id, name){
+  const c = cl(), rep = c.rep, key = id + '/' + name;
+  if (c.extraSubs && c.extraSubs[id]) c.extraSubs[id] = c.extraSubs[id].filter(x => x !== name);
+  rep.tx.forEach(t => { if (t.man && t.cat === key) t.cat = id; });
+  Object.keys(rep.rules || {}).forEach(k => { if (rep.rules[k] === key) rep.rules[k] = id; });
+  const dl = document.getElementById('catDL'); if (dl) dl.remove(); recomputeAll(); persist();
+}
 function allCats(){
   const out = ['inc'].concat(subsOf('inc').map(s => 'inc/' + s));
   GROUPS.forEach(g => g.cats.forEach(id => { out.push(id); subsOf(id).forEach(s => out.push(id + '/' + s)); }));
@@ -811,7 +818,7 @@ function catsPanel(){
     ${list.length ? `<div class="row-btns">${list.map(x => `<span class="tag">${esc(x.name)} ${ui.delCatArm === x.id ? `<span class="note-s">${catInUse(x.id) ? 'יש בה שורות או תקציב: השורות יחזרו ל״ללא שיוך״, וסעיפי התקציב שלה יימחקו.' : ''} למחוק את ״${esc(x.name)}״?</span> <button class="btn danger sm" data-act="delcat-yes" data-id="${x.id}">כן, למחוק</button> <button class="btn ghost sm" data-act="delcat-no">ביטול</button>` : `<button class="x" data-act="delcat" data-id="${x.id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה">×</button>`}</span>`).join('')}</div>` : ''}
     <p class="small" style="margin-top:12px"><b>הוספת שורה (סעיף) בתוך קטגוריה</b>, למשל ״שתילים״ בתוך ״ירוקים ונהנים״. אפשר גם להקליד בשדה הקטגוריה של שורה: ״ירוקים ונהנים › שתילים״.</p>
     <div class="row-btns"><select id="subcat" aria-label="קטגוריה">${CATS.filter(x => x.id !== 'inc').map(x => `<option value="${x.id}" ${ui.subCat === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select><input type="text" id="newsub" maxlength="40" placeholder="שם השורה" aria-label="שם השורה"><button class="btn" data-act="addsub">+ הוספת שורה</button></div>
-    ${Object.keys(c.extraSubs || {}).some(k => (c.extraSubs[k] || []).length) ? `<p class="small">שורות שהוספת: ${Object.keys(c.extraSubs).filter(k => BY[k]).map(k => c.extraSubs[k].map(n => esc(BY[k].name + ' › ' + n)).join(' · ')).filter(Boolean).join(' · ')}</p>` : ''}
+    ${Object.keys(c.extraSubs || {}).some(k => (c.extraSubs[k] || []).length) ? `<div class="row-btns"><span class="small">שורות שהוספת:</span> ${Object.keys(c.extraSubs).filter(k => BY[k]).map(k => c.extraSubs[k].map(n => `<span class="tag">${esc(BY[k].name + ' › ' + n)} <button class="x" data-act="delsub" data-c="${k}" data-s="${esc(n)}" title="מחיקת השורה" aria-label="מחיקת השורה">×</button></span>`).join('')).join('')}</div>` : ''}
     <p class="small" style="margin-top:12px"><b>קטגוריה חדשה</b></p>
     <div class="row-btns"><input type="text" id="newcat" maxlength="40" placeholder="שם הקטגוריה החדשה" aria-label="שם הקטגוריה החדשה"><button class="btn" data-act="addcat">+ הוספת קטגוריה</button>${ui.catMsg ? `<span class="note-s">${esc(ui.catMsg)}</span>` : ''}</div>
   </div></div>`;
@@ -1051,7 +1058,7 @@ function cubesHtml(m){
   order.forEach(id => { if (stacked.has(id) && cols.length && !['inc', 'var'].includes(cols[cols.length - 1][0])) cols[cols.length - 1].push(id); else cols.push([id]); });
   const one = (id, i) => {
     const h = id === 'inc' ? cubeIncome(m, BY.inc) : id === 'var' ? cubeWeekly(m, BY.var) : cubeCompact(m, BY[id]);
-    const ctl = `<span class="mv noprint"><button class="mvb" data-act="cubemv" data-id="${id}" data-d="-1" title="להזיז קודם" aria-label="להזיז את ${esc(BY[id].name)} קודם" ${i === 0 ? 'disabled' : ''}>▶</button><button class="mvb" data-act="cubemv" data-id="${id}" data-d="1" title="להזיז אחר כך" aria-label="להזיז את ${esc(BY[id].name)} אחר כך" ${i === order.length - 1 ? 'disabled' : ''}>◀</button>${['inc', 'var'].includes(id) ? '' : `<button class="mvb ${stacked.has(id) ? 'on' : ''}" data-act="cubestack" data-id="${id}" title="${stacked.has(id) ? 'להוציא ממתחת לקטגוריה הקודמת' : 'לשים מתחת לקטגוריה הקודמת'}" aria-pressed="${stacked.has(id)}">⤓</button>`}</span>`;
+    const ctl = `<span class="mv noprint"><button class="mvb" data-act="cubemv" data-id="${id}" data-d="-1" title="להזיז קודם" aria-label="להזיז את ${esc(BY[id].name)} קודם" ${i === 0 ? 'disabled' : ''}>▶</button><button class="mvb" data-act="cubemv" data-id="${id}" data-d="1" title="להזיז אחר כך" aria-label="להזיז את ${esc(BY[id].name)} אחר כך" ${i === order.length - 1 ? 'disabled' : ''}>◀</button>${BY[id] && BY[id].custom ? `<button class="mvb" data-act="delcat-month" data-id="${id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה ${esc(BY[id].name)}">🗑</button>` : ''}${['inc', 'var'].includes(id) ? '' : `<button class="mvb ${stacked.has(id) ? 'on' : ''}" data-act="cubestack" data-id="${id}" title="${stacked.has(id) ? 'להוציא ממתחת לקטגוריה הקודמת' : 'לשים מתחת לקטגוריה הקודמת'}" aria-pressed="${stacked.has(id)}">⤓</button>`}</span>`;
     return h.replace('<article class="cube', `<article data-cube="${id}" class="cube`).replace('<header class="cube-h">', `<header class="cube-h" draggable="true" data-drag="${id}" title="אפשר לגרור כדי להזיז">${ctl}`);
   };
   return cols.map(col => col.length === 1 ? one(col[0], order.indexOf(col[0])) : `<div class="stack">${col.map(id => one(id, order.indexOf(id))).join('')}</div>`).join('');
@@ -1481,6 +1488,8 @@ document.addEventListener('click', async e => {
     case 'delcat': ui.delCatArm = b.dataset.id; ui.catMsg = ''; render(); break;
     case 'delcat-yes': { const x = (c.extraCats || []).find(x => x.id === b.dataset.id); delClientCat(b.dataset.id); ui.catMsg = x ? `הקטגוריה ״${x.name}״ נמחקה.` : ''; ui.delCatArm = null; render(); break; }
     case 'delcat-no': ui.delCatArm = null; render(); break;
+    case 'delcat-month': { const x = (c.extraCats || []).find(x => x.id === b.dataset.id); if (x && confirm(`למחוק את הקטגוריה ״${x.name}״ ללקוח הזה?${catInUse(x.id) ? ' השורות שלה יחזרו ל״ללא שיוך״, וסעיפי התקציב שלה יימחקו.' : ''}`)) { delClientCat(x.id); render(); } break; }
+    case 'delsub': { delClientSub(b.dataset.c, b.dataset.s); render(); break; }
     case 'pick': ws.cid = b.dataset.id; ui.pending = null; ui.drill = null; crossFor = null; persist(); render(); break;
     case 'delclient': ui.delClientArm = b.dataset.id; render(); break;
     case 'delclient-yes': { ws.clients = ws.clients.filter(x => x.id !== b.dataset.id); if (!ws.clients.length) ws.clients.push(newClient('לקוח/ה 1')); if (!ws.clients.some(x => x.id === ws.cid)) ws.cid = ws.clients[0].id; ui.delClientArm = null; crossFor = null; persist(); render(); break; }
