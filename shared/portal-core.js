@@ -11,7 +11,9 @@ import { SECTIONS } from './template.js';
 export const BOOK_TYPE = 'cashflow-book';
 export const TRACK_IDS = SECTIONS.filter(s => !s.income).map(s => s.id);
 export const WEEKLY = new Set(['var', 'trn', 'med']);
-const ACTUAL = new Set(['paid', 'w', 'amount', 'note']);
+const ACTUAL = new Set(['paid', 'w', 'amount', 'note', 'fixed']);
+// a fixed expense (rent, a loan, insurance…) carries its paid amount into every new month; not for variable spending
+export const canBeFixed = cat => cat !== 'var' && cat !== 'inc';
 
 const n0 = v => { const n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v).replace(/[^\d.\-]/g, '')); return isFinite(n) ? n : 0; };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -30,6 +32,7 @@ const cleanItem = (it, cat) => {
     } else o.paid = n0(it.paid);
     o.note = String(it.note || '').slice(0, 200);
     if (it.end) o.end = String(it.end).slice(0, 7);
+    if (it.fixed && canBeFixed(cat)) o.fixed = true;
   }
   if (it.by === 'client') o.by = 'client';
   return o;
@@ -127,9 +130,12 @@ export function nextMonthLabel(book, now = new Date()) {
 }
 
 // A new month copies the rows and budgets of the last month, with empty actual entries.
+const monthKey = label => { const m = new RegExp('^(' + HEB_MONTHS.join('|') + ')\\s+(\\d{4})').exec(String(label || '').trim()); return m ? m[2] + '-' + String(HEB_MONTHS.indexOf(m[1]) + 1).padStart(2, '0') : ''; };
 export function newMonthFrom(book, label) {
-  const last = book.months[book.months.length - 1];
-  const copy = it => ({ ...it, id: uid(), paid: 0, w: [0, 0, 0, 0, 0], note: '' });
+  const last = book.months[book.months.length - 1], key = monthKey(label);
+  // a fixed expense keeps its amount, until its end month (an installment or a loan that is paid off)
+  const copy = it => it.fixed && !(it.end && key && key > it.end) ? { ...it, id: uid(), note: '' }
+    : { ...it, id: uid(), paid: 0, w: [0, 0, 0, 0, 0], note: '', fixed: undefined };
   return {
     id: uid(), label,
     income: last ? last.income.map(it => ({ ...it, id: uid(), amount: 0 })) : SECTIONS[0].items.map(l => ({ id: uid(), label: l, amount: 0 })),

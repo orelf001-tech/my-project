@@ -3,7 +3,7 @@
 // The book is decrypted and encrypted here, in the browser; the server only stores ciphertext.
 import { sealSym, openSym, sha256Hex } from '../shared/crypto.js';
 import { SECTIONS, BY_ID } from '../shared/template.js';
-import { normalizeBook, mergeBooks, booksEqual, newMonthFrom, nextMonthLabel, newRow, monthTotals, WEEKLY } from '../shared/portal-core.js';
+import { normalizeBook, mergeBooks, booksEqual, newMonthFrom, nextMonthLabel, newRow, monthTotals, WEEKLY, canBeFixed } from '../shared/portal-core.js';
 
 if (window.top !== window.self) { document.documentElement.innerHTML = ''; throw new Error('framed'); }
 
@@ -133,12 +133,13 @@ function rowsHtml(m, s) {
     if (s.income) return `<div class="prow">${lab}<span class="cur"><input class="amt" data-f="amount" data-c="inc" data-i="${esc(it.id)}" value="${esc(nv(it.amount))}" inputmode="decimal" placeholder="0" aria-label="הכנסה – ${esc(it.label)}"></span>${del}</div>`;
     const budget = n0(it.budget) ? `<small class="bud">תקציב <span class="num">${fmt(it.budget)}</span></small>` : '';
     const end = it.end ? `<small class="bud">מסתיים ${esc(it.end.split('-').reverse().join('/'))}</small>` : '';
+    const fx = canBeFixed(s.id) ? `<label class="fx"><input type="checkbox" data-f="fixed" data-c="${s.id}" data-i="${esc(it.id)}" ${it.fixed ? 'checked' : ''}> 🔁 הוצאה קבועה: למלא אוטומטית כל חודש</label>` : '';
     if (weekly) {
       const tot = (it.w || []).reduce((a, x) => a + n0(x), 0);
-      return `<div class="prow wk"><div class="wkh">${lab}${budget}<span class="num wtot" data-tot="${esc(it.id)}">${fmt(tot)}</span>${del}</div>
+      return `<div class="prow wk"><div class="wkh">${lab}${budget}${fx}<span class="num wtot" data-tot="${esc(it.id)}">${fmt(tot)}</span>${del}</div>
         <div class="weeks">${[0, 1, 2, 3, 4].map(k => `<label><small>שבוע ${k + 1}</small><input class="amt" data-f="w" data-w="${k}" data-c="${s.id}" data-i="${esc(it.id)}" value="${esc(nv((it.w || [])[k]))}" inputmode="decimal" placeholder="0" aria-label="${esc(it.label)} – שבוע ${k + 1}"></label>`).join('')}</div></div>`;
     }
-    return `<div class="prow"><div class="plabw">${lab}${budget}${end}</div><span class="cur"><input class="amt" data-f="paid" data-c="${s.id}" data-i="${esc(it.id)}" value="${esc(nv(it.paid))}" inputmode="decimal" placeholder="0" aria-label="שולם – ${esc(it.label)}"></span>${del}</div>`;
+    return `<div class="prow"><div class="plabw">${lab}${budget}${end}${fx}</div><span class="cur"><input class="amt" data-f="paid" data-c="${s.id}" data-i="${esc(it.id)}" value="${esc(nv(it.paid))}" inputmode="decimal" placeholder="0" aria-label="שולם – ${esc(it.label)}"></span>${del}</div>`;
   }).join('');
 }
 
@@ -197,6 +198,12 @@ app.addEventListener('input', e => {
   const d = e.target.dataset; if (!d.f) return;
   const m = curMonth(); if (!m) return;
   const it = listOf(m, d.c).find(x => x.id === d.i); if (!it) return;
+  if (d.f === 'fixed') {
+    // a fixed expense with nothing filled in yet starts from its budget
+    it.fixed = e.target.checked;
+    if (it.fixed && !n0(it.paid) && !(it.w || []).some(n0) && n0(it.budget)) { if (WEEKLY.has(d.c)) { it.w = [n0(it.budget), 0, 0, 0, 0]; } it.paid = n0(it.budget); }
+    changed(); render(false); return;
+  }
   if (d.f === 'label') it.label = e.target.value.slice(0, 80);
   else if (d.f === 'w') { it.w = it.w || [0, 0, 0, 0, 0]; it.w[+d.w] = n0(e.target.value); it.paid = it.w.reduce((a, x) => a + n0(x), 0); }
   else it[d.f] = n0(e.target.value);

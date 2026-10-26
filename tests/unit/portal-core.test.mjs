@@ -116,3 +116,16 @@ test('the client cannot change a budget, only what was paid', () => {
   const onCoach = P.mergeBooks(base, coach, client, 'coach'), onClient = P.mergeBooks(base, client, coach, 'client');
   for (const m of [onCoach, onClient]) assert.deepEqual([m.months[0].cats.hou[0].budget, m.months[0].cats.hou[0].paid], [4000, 4000]);
 });
+
+test('a fixed expense fills itself in every new month, until it ends; variable spending never does', () => {
+  const b = book([month('m1', 'אוקטובר 2026', {
+    hou: [item('h', 'שכר דירה', { budget: 4000, paid: 4000, fixed: true })],
+    loa: [item('l', 'הלוואה', { budget: 1200, paid: 1200, fixed: true, end: '2026-11' })],
+    trn: [item('t', 'ליסינג', { w: [900, 0, 0, 0, 0], fixed: true })],
+    var: [item('v', 'מזון', { w: [300, 0, 0, 0, 0], fixed: true })]
+  })]);
+  assert.equal(b.months[0].cats.var[0].fixed, undefined, 'not for variable spending');
+  const nov = P.newMonthFrom(b, 'נובמבר 2026'), dec = P.newMonthFrom({ months: [nov] }, 'דצמבר 2026');
+  assert.deepEqual([nov.cats.hou[0].paid, nov.cats.loa[0].paid, nov.cats.trn[0].w[0], nov.cats.var[0].w[0]], [4000, 1200, 900, 0]);
+  assert.deepEqual([dec.cats.hou[0].paid, dec.cats.loa[0].paid, !!dec.cats.loa[0].fixed], [4000, 0, false], 'the loan stops after its end month');
+});

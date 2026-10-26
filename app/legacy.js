@@ -99,7 +99,10 @@ function newMonth(label, from, copyBudgets){
   const m = {id:uid(), label:label, income:[], cats:{}};
   if (from) {
     m.income = from.income.map(i => ({id:uid(), label:i.label, amount: copyBudgets ? num(i.amount) : 0}));
-    EXP.forEach(c => { m.cats[c.id] = (from.cats[c.id] || []).map(it => { const n = mkItem(it.label); if (copyBudgets) n.budget = num(it.budget); if (it.end) n.end = it.end; return n; }); });
+    // a fixed expense the client marked (rent, a loan…) keeps its amount until its end month
+    const nowKey = new Date().toISOString().slice(0, 7);
+    EXP.forEach(c => { m.cats[c.id] = (from.cats[c.id] || []).map(it => { const n = mkItem(it.label); if (copyBudgets) n.budget = num(it.budget); if (it.end) n.end = it.end;
+      if (it.fixed && c.id !== 'var' && !(it.end && it.end < nowKey)) { n.fixed = true; n.paid = num(it.paid); n.w = (it.w || [0, 0, 0, 0, 0]).slice(); if (it.by) n.by = it.by; } return n; }); });
   } else {
     m.income = DEFAULTS.inc.items.map(l => ({id:uid(), label:l, amount:0}));
     EXP.forEach(c => { const d = DEFAULTS[c.id] || {items:[], spare:2}; m.cats[c.id] = d.items.map(mkItem).concat(Array.from({length:d.spare}, () => mkItem(''))); });
