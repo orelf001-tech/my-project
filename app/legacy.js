@@ -636,7 +636,8 @@ function catLabel(s){
   return sub ? b.name + ' › ' + sub : b.name + ((SUBLIST[c] || []).length ? ' (כללי)' : '');
 }
 function labelToCat(v){ v = String(v || '').trim(); if (!v) return null; for (const x of allCats()) if (x === v || catLabel(x) === v) return x; return null; }
-function ensureDatalist(){ applyClientCats(cl()); if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
+const NEWCAT = '+ קטגוריה חדשה: ', NEWCAT_HINT = '+ קטגוריה חדשה ללקוח הזה (הקלידי שם)';
+function ensureDatalist(){ applyClientCats(cl()); if (document.getElementById('catDL')) return; const dl = document.createElement('datalist'); dl.id = 'catDL'; dl.innerHTML = `<option value="${esc(NEWCAT_HINT)}"></option><option id="catNew" value="" disabled></option>` + allCats().map(x => `<option value="${esc(catLabel(x))}"></option>`).join(''); document.body.appendChild(dl); }
 const xStatus = items => {
   const st = items.filter(t => t.settle && !t.man); if (!st.length || st.length !== items.length || st.some(t => !t.x)) return '';
   const gap = r2(st.reduce((a, t) => a + (t.gap || 0), 0));
@@ -1232,6 +1233,8 @@ function updateComputed(){
 function findItem(m, c, i){ return c === 'inc' ? m.income.find(x => x.id === i) : (m.cats[c] || []).find(x => x.id === i); }
 document.addEventListener('input', e => {
   const t = e.target, f = t && t.dataset ? t.dataset.f : null;
+  if (t && t.classList && t.classList.contains('pick')) { const o = document.getElementById('catNew'), v = t.value.trim();
+    if (o) { const show = v && v !== NEWCAT_HINT && !v.startsWith(NEWCAT) && !labelToCat(v); o.value = show ? NEWCAT + v : ''; o.disabled = !show; } return; }
   if (t && t.id === 'dq') { ui.drill.q = t.value; ui.limit = 120; const l = document.getElementById('dlist'); if (l) l.innerHTML = listHTML(ui.drill); return; }
   if (t && t.id === 'fq') { ui.fixQ = t.value; ui.limit = 120; const l = document.getElementById('dlist'); if (l) l.innerHTML = listHTML(fixD()); return; }
   if (t && t.id === 'minc') { cl().rep.manualIncome = num(t.value); persist(); return; }
@@ -1265,6 +1268,15 @@ document.addEventListener('change', async e => {
   if (t.dataset.file === 'json') { const f = t.files && t.files[0]; if (f) importText(await f.text()); t.value = ''; return; }
   if (t.dataset.file === 'auto') { if (t.files && t.files.length) await onFiles(t.files); t.value = ''; return; }
   if (t.dataset.file) { const f = t.files && t.files[0]; if (f) await onFile(f, t.dataset.file); t.value = ''; return; }
+  if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick') && (t.value === NEWCAT_HINT)) { t.value = ''; t.placeholder = 'שם הקטגוריה החדשה, ואז Enter'; t.dataset.mknew = '1'; return; }
+  if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick') && t.value.trim() && !labelToCat(t.value) && (t.value.startsWith(NEWCAT) || t.dataset.mknew || confirm(`ליצור ל${cl().name} קטגוריה חדשה בשם ״${t.value.trim()}״?`))) {
+    // a new category for this client, straight from the row being assigned
+    const name = t.value.replace(NEWCAT, '').trim(), err = addClientCat(name), x = (cl().extraCats || []).find(c => c.name === name);
+    delete t.dataset.mknew;
+    if (!x) { flash(err || 'לא הצלחתי ליצור את הקטגוריה.'); t.value = catLabel(t.dataset.cur); return; }
+    if (t.dataset.t) assignTx(t.dataset.t, x.id); else setRule(t.dataset.g, x.id);
+    render(); return;
+  }
   if ((t.dataset.t || t.dataset.g) && t.classList.contains('pick')) { const v = labelToCat(t.value); if (!v || v === t.dataset.cur) { t.value = catLabel(t.dataset.cur); return; } if (t.dataset.t) assignTx(t.dataset.t, v); else setRule(t.dataset.g, v); refreshAfterAssign(); return; }
   if (t.id === 'dm') { ui.drill.month = t.value || null; ui.limit = 120; renderDrill(); return; }
   if (t.id === 'cardby') { cl().rep.cardBy = t.value; recomputeAll(); persist(); render(); return; }
