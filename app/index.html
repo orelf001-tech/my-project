@@ -250,7 +250,8 @@ input.cs.pick:focus{outline:2px solid var(--gold)}
 .row.head span:first-child,.row.tot span:first-child{text-align:center}
 .row.head span:nth-child(2),.row.tot span:nth-child(2){text-align:start}
 
-.c-compact.dea{grid-template-columns:26px minmax(0,1fr) minmax(40px,54px) minmax(40px,54px) minmax(42px,56px) minmax(96px,118px)}
+.c-compact.dea{grid-template-columns:26px minmax(120px,1fr) minmax(56px,90px) minmax(56px,90px) minmax(56px,90px) minmax(110px,140px)}
+@media (max-width:760px){.c-compact.dea{grid-template-columns:26px minmax(0,1fr) 54px 54px 56px}.c-compact.dea .endm{grid-column:2/-1}.c-compact.dea.head span:last-child{display:none}}
 input.endm{border:1px solid var(--line);background:var(--field);border-radius:8px;padding:4px 4px;font-size:12px;width:100%;min-width:0;direction:ltr}
 input.endm:focus{outline:2px solid var(--gold)}
 </style>
