@@ -251,6 +251,15 @@ input.cs.pick:focus{outline:2px solid var(--gold)}
 .row.head span:nth-child(2),.row.tot span:nth-child(2){text-align:start}
 
 .cubes .stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.cube-h{position:relative;cursor:grab}
+.cube-h .mv{position:absolute;inset-inline-end:6px;top:50%;transform:translateY(-50%);display:flex;gap:2px;opacity:.3;transition:opacity .15s}
+.cube:hover .cube-h .mv,.cube-h .mv:focus-within{opacity:1}
+.mvb{border:0;background:transparent;color:var(--ink);font-size:12px;width:22px;height:22px;border-radius:6px;cursor:pointer;padding:0}
+.mvb:hover{background:var(--card)}
+.mvb:disabled{opacity:.25;cursor:default}
+.mvb.on{background:var(--card);font-weight:700}
+.cube.dropto{outline:3px dashed var(--gold);outline-offset:3px}
+@media (hover:none){.cube-h .mv{opacity:.8}}
 /* installments: same size as the other cards; the end date sits under the item */
 .c-compact.dea{grid-template-columns:26px minmax(0,1fr) minmax(42px,60px) minmax(42px,60px) minmax(44px,62px)}
 .c-compact.dea .endm{grid-column:2/-1;margin-top:-2px}

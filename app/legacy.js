@@ -1014,6 +1014,28 @@ function breakdownRows(){
   return h + line('t', 'סה״כ הוצאות', 'tot');
 }
 function syncVarItems(m){ const R = buildReport(); let changed = false; (R.subs.var || []).forEach(s => { if (R.avgSub('var/' + s) <= 0.5) return; const lab = s || 'משתנות – כללי'; if ((m.cats.var || []).some(x => x.label.trim() === lab)) return; const it = (m.cats.var || []).find(x => !x.label.trim() && !num(x.budget)); if (it) it.label = lab; else (m.cats.var = m.cats.var || []).push(mkItem(lab)); changed = true; }); if (changed) persist(); }
+/* The coach arranges the monthly cards herself: order and "under the previous one" are kept for all clients. */
+const CUBE_DEFAULT = ['inc', 'var', 'hou', 'sub', 'trn', 'med', 'ins', 'dea', 'loa', 'sto'];
+function cubeOrder(){
+  const ids = CUBE_DEFAULT.concat((cl().extraCats || []).map(x => x.id).filter(id => BY[id]));
+  const saved = (ws.cubeOrder || []).filter(id => ids.includes(id));
+  return saved.concat(ids.filter(id => !saved.includes(id)));
+}
+const cubeStacked = () => new Set(ws.cubeStack || ['sto']);
+function cubesHtml(m){
+  const order = cubeOrder(), stacked = cubeStacked(), cols = [];
+  order.forEach(id => { if (stacked.has(id) && cols.length && !['inc', 'var'].includes(cols[cols.length - 1][0])) cols[cols.length - 1].push(id); else cols.push([id]); });
+  const one = (id, i) => {
+    const h = id === 'inc' ? cubeIncome(m, BY.inc) : id === 'var' ? cubeWeekly(m, BY.var) : cubeCompact(m, BY[id]);
+    const ctl = `<span class="mv noprint"><button class="mvb" data-act="cubemv" data-id="${id}" data-d="-1" title="להזיז קודם" aria-label="להזיז את ${esc(BY[id].name)} קודם" ${i === 0 ? 'disabled' : ''}>▶</button><button class="mvb" data-act="cubemv" data-id="${id}" data-d="1" title="להזיז אחר כך" aria-label="להזיז את ${esc(BY[id].name)} אחר כך" ${i === order.length - 1 ? 'disabled' : ''}>◀</button>${['inc', 'var'].includes(id) ? '' : `<button class="mvb ${stacked.has(id) ? 'on' : ''}" data-act="cubestack" data-id="${id}" title="${stacked.has(id) ? 'להוציא ממתחת לקטגוריה הקודמת' : 'לשים מתחת לקטגוריה הקודמת'}" aria-pressed="${stacked.has(id)}">⤓</button>`}</span>`;
+    return h.replace('<article class="cube', `<article data-cube="${id}" class="cube`).replace('<header class="cube-h">', `<header class="cube-h" draggable="true" data-drag="${id}" title="אפשר לגרור כדי להזיז">${ctl}`);
+  };
+  return cols.map(col => col.length === 1 ? one(col[0], order.indexOf(col[0])) : `<div class="stack">${col.map(id => one(id, order.indexOf(id))).join('')}</div>`).join('');
+}
+function moveCube(id, to){
+  const order = cubeOrder(), from = order.indexOf(id); if (from < 0 || to < 0 || to >= order.length) return;
+  order.splice(from, 1); order.splice(to, 0, id); ws.cubeOrder = order; persist(); render();
+}
 function monthView(m){
   { const c0 = cl(); if (c0.months[0] && c0.months[0].id === m.id && c0.rep.tx.length) syncVarItems(m); }
   const kvRow = (label, b, p, l, cls) => `<div class="${cls || ''}">${label}</div><div class="${cls || ''}"><span class="num" data-calc="${b}"></span></div><div class="${cls || ''}"><span class="num" data-calc="${p}"></span></div><div class="${cls || ''}"><span class="num" data-calc="${l}"></span></div>`;
@@ -1053,13 +1075,8 @@ function monthView(m){
         <div class="scroll"><table class="tbl"><thead><tr><th>קטגוריה</th><th>תקציב</th><th>שולם</th><th>נותר</th><th>% ניצול</th><th>סטטוס</th></tr></thead><tbody>${breakdownRows()}</tbody></table></div>
       </div>
     </div>
-    <div class="cubes">
-      ${cubeIncome(m, BY.inc)}
-      ${cubeWeekly(m, BY.var)}
-      ${cube('hou')}${cube('sub')}${cube('trn')}${cube('med')}
-      ${cube('ins')}${cube('dea')}<div class="stack">${cube('loa')}${cube('sto')}</div>
-     ${(cl().extraCats || []).map(x => BY[x.id] ? cube(x.id) : '').join('')}
-    </div>
+    <div class="cubes">${cubesHtml(m)}</div>
+    <p class="noprint small" style="margin-top:8px">אפשר לסדר את הקטגוריות: גוררים קטגוריה בכותרת שלה, או לוחצים על החצים. ⤓ מניח קטגוריה מתחת לזו שלפניה. ${ws.cubeOrder || ws.cubeStack ? '<button class="btn ghost sm" data-act="cuberesort">חזרה לסדר הרגיל</button>' : ''}</p>
   </section>`;
 }
 function summaryView(){
@@ -1461,6 +1478,9 @@ document.addEventListener('click', async e => {
     case 'tplredo': ui.tplRedo = true; render(); break;
     case 'tplredo-no': ui.tplRedo = false; render(); break;
     case 'tplredo-yes': { const first = c.months[0]; if (c.template && first) { const snap = JSON.parse(JSON.stringify(first)); const CUR = curMap(); (snap.cats.var || []).forEach(it => { const v = CUR[it.label.trim()]; if (v) it.cur = v; }); snap.locked = true; c.template = {savedAt:c.template.savedAt, editedAt:new Date().toISOString(), month:snap}; } ui.tplRedo = false; persist(); render(); break; }
+    case 'cubemv': { const o = cubeOrder(); moveCube(b.dataset.id, o.indexOf(b.dataset.id) + +b.dataset.d); break; }
+    case 'cubestack': { const st = cubeStacked(); if (st.has(b.dataset.id)) st.delete(b.dataset.id); else st.add(b.dataset.id); ws.cubeStack = [...st]; persist(); render(); break; }
+    case 'cuberesort': delete ws.cubeOrder; delete ws.cubeStack; persist(); render(); break;
     case 'delmonth': ui.delArm = true; render(); break;
     case 'delmonth-no': ui.delArm = false; render(); break;
     case 'delmonth-yes': { if (c.months.length > 1) { const idx = c.months.findIndex(x => x.id === c.monthId); c.months.splice(idx, 1); c.monthId = c.months[Math.max(0, idx - 1)].id; } ui.delArm = false; persist(); render(); break; }
@@ -1506,5 +1526,10 @@ render();
 try { setSaved(localStorage.getItem(KEY2) ? 'נשמר ✓' : ''); } catch(_) {}
 if (!(window.claude && window.claude.use)) dl = {save:async ({filename, data}) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], {type:'application/json'})); a.download = filename; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }};
 try { if (window.claude && window.claude.use) window.claude.use('downloads').then(d => { dl = d; if (cl().view === 'backup') render(); }).catch(() => {}); } catch(_) {}
+/* drag a monthly card by its title to move it */
+let dragCube = null;
+document.addEventListener('dragstart', e => { const h = e.target.closest && e.target.closest('[data-drag]'); if (!h) return; dragCube = h.dataset.drag; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', dragCube); } catch(_) {} });
+document.addEventListener('dragover', e => { if (!dragCube) return; const t = e.target.closest && e.target.closest('[data-cube]'); if (t) { e.preventDefault(); document.querySelectorAll('.cube.dropto').forEach(x => x.classList.remove('dropto')); t.classList.add('dropto'); } });
+document.addEventListener('drop', e => { if (!dragCube) return; const t = e.target.closest && e.target.closest('[data-cube]'); if (t) { e.preventDefault(); const o = cubeOrder(); if (t.dataset.cube !== dragCube) moveCube(dragCube, o.indexOf(t.dataset.cube)); } dragCube = null; });
+document.addEventListener('dragend', () => { dragCube = null; document.querySelectorAll('.cube.dropto').forEach(x => x.classList.remove('dropto')); });
 })();
-
