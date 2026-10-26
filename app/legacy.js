@@ -72,9 +72,13 @@ function catInUse(id){
     || c.months.some(m => (m.cats[id] || []).some(it => num(it.budget) || num(it.paid) || (it.w || []).some(num)));
 }
 function delClientCat(id){
-  const c = cl(); if (catInUse(id)) return false;
+  // rows assigned to it go back to "ללא שיוך" (the rules that sent them there are dropped); its budget lines go away
+  const c = cl(), rep = c.rep, of = v => String(v || '').split('/')[0] === id;
+  rep.tx.forEach(t => { if (t.man && of(t.cat)) { t.man = false; t.cat = null; } });
+  Object.keys(rep.rules || {}).forEach(k => { if (of(rep.rules[k])) delete rep.rules[k]; });
+  if (rep.xfer) Object.keys(rep.xfer).forEach(k => { if (of(k)) delete rep.xfer[k]; });
   c.extraCats = (c.extraCats || []).filter(x => x.id !== id); c.months.forEach(m => { delete m.cats[id]; }); if (c.extraSubs) delete c.extraSubs[id];
-  applyClientCats(c); persist(); return true;
+  applyClientCats(c); recomputeAll(); persist(); return true;
 }
 const TGROUPS_OF = () => GROUPS.map(g => ({id:g.id, name:g.name, cats:g.cats.filter(id => !NOT_IN_MONTHS.includes(id))})).filter(g => g.cats.length);
 const DEFAULTS = {
@@ -804,7 +808,7 @@ function catsPanel(){
   const c = cl(), list = c.extraCats || [];
   return `<div class="card noprint" style="margin-bottom:14px"><h2>קטגוריות ושורות מיוחדות ללקוח הזה</h2><div class="pad">
     <p class="small">למשל ״הוצאות עסק״ או ״הוצאות על הורים״. הקטגוריה נוספת רק ל${esc(c.name)}: אפשר לשייך אליה שורות, היא מופיעה בדוח, בתקציב ובדוח החודשי של הלקוח/ה.</p>
-    ${list.length ? `<div class="row-btns">${list.map(x => `<span class="tag">${esc(x.name)} ${ui.delCatArm === x.id ? `<button class="x" data-act="delcat-yes" data-id="${x.id}" title="למחוק" aria-label="למחוק">למחוק?</button>` : `<button class="x" data-act="delcat" data-id="${x.id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה">×</button>`}</span>`).join('')}</div>` : ''}
+    ${list.length ? `<div class="row-btns">${list.map(x => `<span class="tag">${esc(x.name)} ${ui.delCatArm === x.id ? `<span class="note-s">${catInUse(x.id) ? 'יש בה שורות או תקציב: השורות יחזרו ל״ללא שיוך״, וסעיפי התקציב שלה יימחקו.' : ''} למחוק את ״${esc(x.name)}״?</span> <button class="btn danger sm" data-act="delcat-yes" data-id="${x.id}">כן, למחוק</button> <button class="btn ghost sm" data-act="delcat-no">ביטול</button>` : `<button class="x" data-act="delcat" data-id="${x.id}" title="מחיקת הקטגוריה" aria-label="מחיקת הקטגוריה">×</button>`}</span>`).join('')}</div>` : ''}
     <p class="small" style="margin-top:12px"><b>הוספת שורה (סעיף) בתוך קטגוריה</b>, למשל ״שתילים״ בתוך ״ירוקים ונהנים״. אפשר גם להקליד בשדה הקטגוריה של שורה: ״ירוקים ונהנים › שתילים״.</p>
     <div class="row-btns"><select id="subcat" aria-label="קטגוריה">${CATS.filter(x => x.id !== 'inc').map(x => `<option value="${x.id}" ${ui.subCat === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select><input type="text" id="newsub" maxlength="40" placeholder="שם השורה" aria-label="שם השורה"><button class="btn" data-act="addsub">+ הוספת שורה</button></div>
     ${Object.keys(c.extraSubs || {}).some(k => (c.extraSubs[k] || []).length) ? `<p class="small">שורות שהוספת: ${Object.keys(c.extraSubs).filter(k => BY[k]).map(k => c.extraSubs[k].map(n => esc(BY[k].name + ' › ' + n)).join(' · ')).filter(Boolean).join(' · ')}</p>` : ''}
@@ -1475,7 +1479,8 @@ document.addEventListener('click', async e => {
     case 'addcat': { const inp = document.getElementById('newcat'); ui.catMsg = addClientCat(inp && inp.value); ui.delCatArm = null; render(); break; }
     case 'addsub': { const sel = document.getElementById('subcat'), inp = document.getElementById('newsub'); ui.subCat = sel && sel.value; ui.catMsg = addClientSub(sel && sel.value, inp && inp.value) || ('נוספה שורה ״' + (inp && inp.value.trim()) + '״. אפשר לבחור אותה עכשיו בשדה הקטגוריה.'); render(); break; }
     case 'delcat': ui.delCatArm = b.dataset.id; ui.catMsg = ''; render(); break;
-    case 'delcat-yes': ui.catMsg = delClientCat(b.dataset.id) ? '' : 'אי אפשר למחוק: יש שורות או תקציב בקטגוריה הזו. קודם מעבירים אותם לקטגוריה אחרת.'; ui.delCatArm = null; render(); break;
+    case 'delcat-yes': { const x = (c.extraCats || []).find(x => x.id === b.dataset.id); delClientCat(b.dataset.id); ui.catMsg = x ? `הקטגוריה ״${x.name}״ נמחקה.` : ''; ui.delCatArm = null; render(); break; }
+    case 'delcat-no': ui.delCatArm = null; render(); break;
     case 'pick': ws.cid = b.dataset.id; ui.pending = null; ui.drill = null; crossFor = null; persist(); render(); break;
     case 'delclient': ui.delClientArm = b.dataset.id; render(); break;
     case 'delclient-yes': { ws.clients = ws.clients.filter(x => x.id !== b.dataset.id); if (!ws.clients.length) ws.clients.push(newClient('לקוח/ה 1')); if (!ws.clients.some(x => x.id === ws.cid)) ws.cid = ws.clients[0].id; ui.delClientArm = null; crossFor = null; persist(); render(); break; }
