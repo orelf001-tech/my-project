@@ -131,7 +131,8 @@ function rowsHtml(m, s) {
       : `<span class="plab">${esc(it.label || '—')}</span>`;
     const del = mine ? `<button class="x" data-act="delrow" data-c="${s.id}" data-i="${esc(it.id)}" aria-label="מחיקת השורה">×</button>` : '<span></span>';
     if (s.income) return `<div class="prow">${lab}<span class="cur"><input class="amt" data-f="amount" data-c="inc" data-i="${esc(it.id)}" value="${esc(nv(it.amount))}" inputmode="decimal" placeholder="0" aria-label="הכנסה – ${esc(it.label)}"></span>${del}</div>`;
-    const budget = n0(it.budget) ? `<small class="bud">תקציב <span class="num">${fmt(it.budget)}</span></small>` : '';
+    const rp = rowPaid(it, s.id);
+    const budget = n0(it.budget) ? `<small class="bud">תקציב <span class="num">${fmt(it.budget)}</span> · <span class="left ${rp > n0(it.budget) ? 'over' : 'ok'}" data-rleft="${esc(it.id)}">${leftHtml(n0(it.budget), rp)}</span></small>` : '';
     const end = it.end ? `<small class="bud">מסתיים ${esc(it.end.split('-').reverse().join('/'))}</small>` : '';
     const fx = canBeFixed(s.id) ? `<label class="fx"><input type="checkbox" data-f="fixed" data-c="${s.id}" data-i="${esc(it.id)}" ${it.fixed ? 'checked' : ''}> 🔁 הוצאה קבועה: למלא אוטומטית כל חודש</label>` : '';
     if (weekly) {
@@ -145,10 +146,14 @@ function rowsHtml(m, s) {
 
 // the fixed categories, plus any the coach added for this client (filled once a month, like fixed expenses)
 const sections = () => SECTIONS.concat(((P.local && P.local.extraCats) || []).map(x => ({ id: x.id, name: x.name, title: x.name, color: 'D6CFE0', kind: 'money', items: [], track: 'קטגוריה שהמאמנת הוסיפה עבורך. ממלאים פעם בחודש, או כשיש הוצאה.' })));
+// how much of a budget is left, or by how much it was exceeded
+const rowPaid = (it, cat) => WEEKLY.has(cat) ? (it.w || []).reduce((a, x) => a + n0(x), 0) : n0(it.paid);
+const leftHtml = (b, p) => { const d = b - p; return d >= 0 ? `נשאר <span class="num">${fmt(d)}</span>` : `חריגה <span class="num">${fmt(-d)}</span>`; };
+const setLeft = (el, b, p) => { if (!el) return; el.innerHTML = leftHtml(b, p); el.classList.toggle('over', p > b); el.classList.toggle('ok', p <= b); };
 function sectionCard(m, s, t) {
   const tot = s.income ? t.inc : t.per[s.id].p, bud = s.income ? 0 : t.per[s.id].b;
   return `<details class="card sec" data-color="${s.color}" data-sec="${s.id}" ${P.open.has(s.id) ? 'open' : ''}>
-    <summary><span class="sh"><b>${esc(s.title)}</b><span class="num" data-stot="${s.id}">${fmt(tot)}</span></span>${bud ? `<small>תקציב ${fmt(bud)}</small>` : ''}</summary>
+    <summary><span class="sh"><b>${esc(s.title)}</b><span class="num" data-stot="${s.id}">${fmt(tot)}</span></span>${bud ? `<small>תקציב ${fmt(bud)} · <span class="left ${tot > bud ? 'over' : 'ok'}" data-sleft="${s.id}">${leftHtml(bud, tot)}</span></small>` : ''}</summary>
     ${s.track ? `<p class="track">${esc(s.track)}</p>` : ''}
     <div class="rows">${rowsHtml(m, s) || '<p class="unit">אין שורות.</p>'}</div>
     <button class="add" data-act="addrow" data-c="${s.id}">+ הוספת שורה</button>
@@ -159,7 +164,7 @@ function summary(t) {
   return `<section class="card psum">
     <div><small>הכנסות</small><b class="num" data-sum="inc">${fmt(t.inc)}</b></div>
     <div><small>שולם עד עכשיו</small><b class="num" data-sum="paid">${fmt(t.paid)}</b></div>
-    <div><small>תקציב הוצאות</small><b class="num">${fmt(t.budget)}</b></div>
+    <div><small>תקציב הוצאות</small><b class="num">${fmt(t.budget)}</b>${t.budget ? `<small class="left ${t.paid > t.budget ? 'over' : 'ok'}" data-sum="bleft">${leftHtml(t.budget, t.paid)}</small>` : ''}</div>
     <div><small>נשאר מההכנסות</small><b class="num ${t.left < 0 ? 'neg' : 'pos'}" data-sum="left">${fmt(t.left)}</b></div>
   </section>`;
 }
@@ -188,6 +193,9 @@ function refreshTotals() {
   sections().forEach(s => { const el = app.querySelector(`[data-stot="${s.id}"]`); if (el) el.textContent = fmt(s.income ? t.inc : t.per[s.id].p); });
   const set = (k, v) => { const el = app.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = fmt(v); };
   set('inc', t.inc); set('paid', t.paid); set('left', t.left);
+  setLeft(app.querySelector('[data-sum="bleft"]'), t.budget, t.paid);
+  sections().forEach(s => { if (!s.income) setLeft(app.querySelector(`[data-sleft="${s.id}"]`), t.per[s.id].b, t.per[s.id].p); });
+  Object.keys(m.cats).forEach(c => (m.cats[c] || []).forEach(it => { if (n0(it.budget)) setLeft(app.querySelector(`[data-rleft="${CSS.escape(it.id)}"]`), n0(it.budget), rowPaid(it, c)); }));
   const l = app.querySelector('[data-sum="left"]'); if (l) { l.classList.toggle('neg', t.left < 0); l.classList.toggle('pos', t.left >= 0); }
   WEEKLY.forEach(id => (m.cats[id] || []).forEach(it => { const el = app.querySelector(`[data-tot="${CSS.escape(it.id)}"]`); if (el) el.textContent = fmt((it.w || []).reduce((a, x) => a + n0(x), 0)); }));
 }

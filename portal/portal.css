@@ -53,3 +53,6 @@ details.more>details.sec{margin:0 12px 12px}
 .fx{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-top:4px;cursor:pointer}
 .fx input{width:18px;height:18px;margin:0}
 .fx:has(input:checked){color:var(--teal);font-weight:600}
+.left.ok{color:var(--good-fg)}
+.left.over{color:var(--bad-fg);font-weight:700}
+.psum small.left{display:block;font-size:13px;margin-top:2px}
