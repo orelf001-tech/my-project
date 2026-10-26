@@ -1019,10 +1019,13 @@ function monthView(m){
   <section data-month="${m.id}">
     <div class="monthbar">
       <div class="box"><b>חודש</b><input data-f="mlabel" value="${esc(m.label)}" aria-label="שם החודש"></div>
-      ${m.locked ? `<span class="badge st-none">🔒 תבנית ראשונית נעולה · נשמרה ב־${esc(new Date(cl().template.savedAt).toLocaleDateString('he-IL'))}</span>` : ''}
+      ${m.locked ? (ui.tplEdit
+        ? `<span class="badge st-over">✏️ עורכים את התבנית הראשונית · השינויים נשמרים אוטומטית</span><button class="btn" data-act="tpledit-done">סיום עריכה</button>`
+        : `<span class="badge st-none">🔒 תבנית ראשונית · נשמרה ב־${esc(new Date(cl().template.savedAt).toLocaleDateString('he-IL'))}${cl().template.editedAt ? ' · עודכנה ב־' + esc(new Date(cl().template.editedAt).toLocaleDateString('he-IL')) : ''}</span><button class="btn ghost" data-act="tpledit">✏️ עריכת התבנית</button>
+           ${ui.tplRedo ? `<span class="note-s">להחליף את התבנית בנתונים של ״${esc((cl().months[0] || {}).label || '')}״ כפי שהם עכשיו?</span><button class="btn" data-act="tplredo-yes">כן, להחליף</button><button class="btn ghost" data-act="tplredo-no">ביטול</button>` : `<button class="btn ghost" data-act="tplredo">שמירה מחדש מהחודש הראשון</button>`}`) : ''}
       ${!m.locked && cl().months[0] && cl().months[0].id === m.id ? (cl().template
         ? `<button class="btn ghost" data-act="go" data-v="template">🔒 צפייה בתבנית הראשונית</button>`
-        : (ui.tplArm ? `<span class="note-s">השמירה סופית: אחרי השמירה אי אפשר לשנות את התבנית. לשמור?</span><button class="btn" data-act="savetpl-yes">כן, לשמור תבנית</button><button class="btn ghost" data-act="savetpl-no">ביטול</button>`
+        : (ui.tplArm ? `<span class="note-s">התבנית נשמרת כתמונת מצב של ״לפני״. אפשר לערוך אותה גם אחר כך. לשמור?</span><button class="btn" data-act="savetpl-yes">כן, לשמור תבנית</button><button class="btn ghost" data-act="savetpl-no">ביטול</button>`
                      : `<button class="btn" data-act="savetpl">שמירת תבנית ראשונית</button>`)) : ''}
       ${!m.locked && cl().months.length > 1 ? (ui.delArm
         ? `<span class="note-s">למחוק את החודש הזה לצמיתות?</span><button class="btn danger" data-act="delmonth-yes">כן, למחוק</button><button class="btn ghost" data-act="delmonth-no">ביטול</button>`
@@ -1192,7 +1195,7 @@ function render(){
   else if (v === 'intake') { main.innerHTML = window.CFIntake ? window.CFIntake.view() : '<p class="note-s">טוען…</p>'; if (window.CFIntake) window.CFIntake.mounted(); }
   else if (v === 'help') main.innerHTML = helpView();
   else if (v === 'backup') main.innerHTML = backupView();
-  else { const m = curMonth(); main.innerHTML = m ? monthView(m) : ''; updateComputed(); if (m && m.locked) main.querySelectorAll('input, button.x, button.add').forEach(el => { if (el.tagName === 'INPUT') el.disabled = true; else el.style.display = 'none'; }); }
+  else { const m = curMonth(); main.innerHTML = m ? monthView(m) : ''; updateComputed(); if (m && m.locked && !ui.tplEdit) main.querySelectorAll('input, button.x, button.add').forEach(el => { if (el.tagName === 'INPUT') el.disabled = true; else el.style.display = 'none'; }); }
   renderDrill();
 }
 let crossFor = null;
@@ -1243,7 +1246,8 @@ document.addEventListener('input', e => {
   if (t && t.dataset && t.dataset.pm && ui.pending) { pmChange(t); return; }
   if (!f) return;
   if (f === 'cname') { const c = ws.clients.find(x => x.id === t.dataset.id); if (c) { c.name = t.value; persist(); renderHero(); } return; }
-  const m = curMonth(); if (!m || m.locked) return;
+  const m = curMonth(); if (!m || (m.locked && !ui.tplEdit)) return;
+  if (m.locked && cl().template) cl().template.editedAt = new Date().toISOString();
   if (f === 'mlabel') { m.label = t.value; const b = document.querySelector('[data-tabm="' + m.id + '"]'); if (b) b.textContent = t.value || 'חודש'; persist(); return; }
   const it = findItem(m, t.dataset.c, t.dataset.i); if (!it) return;
   if (f === 'label') it.label = t.value;
@@ -1415,7 +1419,7 @@ document.addEventListener('click', async e => {
   if (act === 'ovclose') { if (e.target === b) { ui.drill = null; renderDrill(); } return; }
   if (b.tagName === 'INPUT' || b.tagName === 'SELECT') return;
   switch (act) {
-    case 'go': { c.view = b.dataset.v; if (b.dataset.m) c.monthId = b.dataset.m; ui.delArm = false; ui.resetArm = false; ui.delClientArm = null; ui.panel = null; ui.msg = c.view === 'load' ? ui.msg : ''; document.body.classList.remove('present'); persist(); render(); window.scrollTo(0, 0); break; }
+    case 'go': { ui.tplEdit = false; ui.tplRedo = false; c.view = b.dataset.v; if (b.dataset.m) c.monthId = b.dataset.m; ui.delArm = false; ui.resetArm = false; ui.delClientArm = null; ui.panel = null; ui.msg = c.view === 'load' ? ui.msg : ''; document.body.classList.remove('present'); persist(); render(); window.scrollTo(0, 0); break; }
     case 'addmonth': ui.panel = ui.panel === 'addmonth' ? null : 'addmonth'; renderPanel(); break;
     case 'newclient': if (ws.clientMode) break; ui.panel = 'newclient'; renderPanel(); window.scrollTo(0, 0); break;
     case 'cancel': ui.panel = null; renderPanel(); renderHero(); break;
@@ -1449,6 +1453,11 @@ document.addEventListener('click', async e => {
     case 'savetpl': ui.tplArm = true; render(); break;
     case 'savetpl-no': ui.tplArm = false; render(); break;
     case 'savetpl-yes': { if (!c.template && m) { const snap = JSON.parse(JSON.stringify(m)); const CUR = curMap(); (snap.cats.var || []).forEach(it => { const v = CUR[it.label.trim()]; if (v) it.cur = v; }); snap.locked = true; c.template = {savedAt:new Date().toISOString(), month:snap}; } ui.tplArm = false; persist(); render(); break; }
+    case 'tpledit': ui.tplEdit = true; render(); break;
+    case 'tpledit-done': ui.tplEdit = false; persist(); render(); break;
+    case 'tplredo': ui.tplRedo = true; render(); break;
+    case 'tplredo-no': ui.tplRedo = false; render(); break;
+    case 'tplredo-yes': { const first = c.months[0]; if (c.template && first) { const snap = JSON.parse(JSON.stringify(first)); const CUR = curMap(); (snap.cats.var || []).forEach(it => { const v = CUR[it.label.trim()]; if (v) it.cur = v; }); snap.locked = true; c.template = {savedAt:c.template.savedAt, editedAt:new Date().toISOString(), month:snap}; } ui.tplRedo = false; persist(); render(); break; }
     case 'delmonth': ui.delArm = true; render(); break;
     case 'delmonth-no': ui.delArm = false; render(); break;
     case 'delmonth-yes': { if (c.months.length > 1) { const idx = c.months.findIndex(x => x.id === c.monthId); c.months.splice(idx, 1); c.monthId = c.months[Math.max(0, idx - 1)].id; } ui.delArm = false; persist(); render(); break; }
